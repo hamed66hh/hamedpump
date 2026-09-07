@@ -1,0 +1,12 @@
+{
+  "name": "multi-source-radar",
+  "version": "1.0.0",
+  "description": "Multi-source crypto radar with 24/7 server backtest",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
