@@ -1,0 +1,1946 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>رادار چندمنبعی | Multi-Source Radar</title>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  *{ -webkit-tap-highlight-color:transparent; box-sizing:border-box; }
+  body{ margin:0; font-family:Tahoma,'Segoe UI',sans-serif; background:linear-gradient(135deg,#05070f,#0a0f1f,#05070f); color:#f1f5f9; }
+  .tnum{ font-variant-numeric:tabular-nums; }
+  .glass{ background:rgba(255,255,255,.04); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
+  .gold-text{ background:linear-gradient(120deg,#fde68a,#fbbf24 35%,#22d3ee 80%); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  @keyframes newFlash{0%,100%{background:rgba(34,211,238,.15)}50%{background:rgba(34,211,238,.35)}}
+  @keyframes saveFlash{0%{background:rgba(16,185,129,.3)}100%{background:rgba(16,185,129,0)}}
+  @keyframes alertSlide{0%{transform:translateY(-100%)}100%{transform:translateY(0)}}
+  .new-badge{ animation:newFlash 1.2s infinite; }
+  .save-flash{ animation:saveFlash 1.5s ease-out; }
+  .alert-banner{ animation:alertSlide .4s ease-out; }
+  .scrollbar-hide::-webkit-scrollbar{display:none}
+  .scrollbar-hide{-ms-overflow-style:none;scrollbar-width:none}
+  input::placeholder{color:#6b7280}
+  .coin-card:active{transform:scale(.98)}
+  .coin-card{transition:transform .15s ease}
+  @media (min-width: 900px){
+    .desktop-wide{ max-width:1100px !important; }
+    .coin-list{ display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+setTimeout(function(){
+  var r=document.getElementById('root');
+  if(r && !r.hasChildNodes()){
+    r.innerHTML='<div style="padding:20px;color:#fca5a5;font-family:Tahoma;direction:rtl">⚠️ اسکریپت بارگذاری نشد. اینترنت/VPN را چک و رفرش کنید.</div>';
+  }
+},5000);
+</script>
+<script type="text/babel">
+const { useState, useEffect, useRef, useMemo } = React;
+
+class ErrorBoundary extends React.Component{
+  constructor(p){ super(p); this.state={err:null}; }
+  static getDerivedStateFromError(e){ return {err:e}; }
+  render(){
+    if(this.state.err){
+      return React.createElement('div',{style:{padding:20,color:'#fca5a5',fontFamily:'Tahoma',direction:'rtl'}},
+        '⚠️ خطای اجرا: '+String((this.state.err&&this.state.err.message)||this.state.err));
+    }
+    return this.props.children;
+  }
+}
+
+const CONFIG = {
+  POLL_INTERVAL: 20,
+  GLOBAL_INTERVAL: 60,
+  MAX_PER_TAB: 15,
+  LOAD_MORE_STEP: 15,
+  NEW_THRESHOLD_MS: 60000,
+  KEEP_SIGNAL_MS: 600000,
+  TOP_SCORE_THRESHOLD: 70,
+  MIN_AGE_MIN: 10,
+  MAX_AGE_MIN: 360,
+  MIN_LIQUIDITY: 5000,
+  MIN_TRUST: 35,
+  MAX_TRACKED: 100,
+  RETRY: 2,
+  SECURITY_TTL_MS: 30*60*1000,
+  SECURITY_BATCH_SIZE: 15,
+  SECURITY_BATCH_DELAY: 1200,
+  PRO_TTL_MS: 10*60*1000,
+  PRO_MAX_CHECKS: 6,
+  ALERT_SCORE_THRESHOLD: 70,
+  ALERT_RECHECK_MS: 60*60*1000,
+  WALLET_TTL_MS: 10*60*1000,
+  WALLET_MAX_TOKENS: 6,
+  CONFLUENCE_THRESHOLD: 2,
+  POD_SHARED_MIN: 2,
+  PAPER_CAPITAL: 10000,
+  PAPER_RISK_PCT: 0.02,
+  BT_WIN_PCT: 0.02,
+};
+
+const LS_KEY = 'multiradar_v15';
+const SECURITY_CACHE_KEY = 'multiradar_security_v1';
+const KEYS_LS = 'multiradar_keys_v1';
+const PRO_CACHE_KEY = 'multiradar_pro_v1';
+const SETTINGS_KEY = 'multiradar_settings_v3';
+const ALERTED_KEY = 'multiradar_alerted_v1';
+const WALLETS_KEY = 'multiradar_wallets_v1';
+const WATCH_KEY = 'multiradar_watch_v1';
+const BT_KEY = 'multiradar_bt_v1';
+
+const USDC='EPjFWdd5AufqSSqeM4qN1xznvG1HeKcw72gTyoSxy4d';
+const CAT_LABEL={top:'👑 برترین',signals:'🔥 سیگنال',accumulation:'🐋 انباشت',breakout:'💥 شکست',volume:'📊 حجم'};
+
+function loadLS(){ try{ const r=localStorage.getItem(LS_KEY); return r?JSON.parse(r):null; }catch(e){ return null; } }
+function saveLS(data){ try{ localStorage.setItem(LS_KEY, JSON.stringify(data)); return true; }catch(e){ return false; } }
+function loadSecurityCache(){ try{ const r=localStorage.getItem(SECURITY_CACHE_KEY); return r?JSON.parse(r):{}; }catch(e){ return {}; } }
+function saveSecurityCache(c){ try{ localStorage.setItem(SECURITY_CACHE_KEY, JSON.stringify(c)); }catch(e){} }
+function loadKeys(){ try{ const r=localStorage.getItem(KEYS_LS); return r?JSON.parse(r):{helius:'',jupiter:'',soltracker:''}; }catch(e){ return {helius:'',jupiter:'',soltracker:''}; } }
+function saveKeys(k){ try{ localStorage.setItem(KEYS_LS, JSON.stringify(k)); }catch(e){} }
+function loadProCache(){ try{ const r=localStorage.getItem(PRO_CACHE_KEY); return r?JSON.parse(r):{}; }catch(e){ return {}; } }
+function saveProCache(c){ try{ localStorage.setItem(PRO_CACHE_KEY, JSON.stringify(c)); }catch(e){} }
+function loadSettings(){ try{ const r=localStorage.getItem(SETTINGS_KEY); return r?JSON.parse(r):{soundOn:true,backtestOn:true,paperOn:true,riskModeOn:true}; }catch(e){ return {soundOn:true,backtestOn:true,paperOn:true,riskModeOn:true}; } }
+function saveSettings(s){ try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }catch(e){} }
+function loadAlerted(){ try{ const r=localStorage.getItem(ALERTED_KEY); return r?JSON.parse(r):{}; }catch(e){ return {}; } }
+function saveAlerted(a){ try{ localStorage.setItem(ALERTED_KEY, JSON.stringify(a)); }catch(e){} }
+function loadWallets(){ try{ const r=localStorage.getItem(WALLETS_KEY); return r?JSON.parse(r):{}; }catch(e){ return {}; } }
+function saveWallets(w){ try{ localStorage.setItem(WALLETS_KEY, JSON.stringify(w)); }catch(e){} }
+function loadWatch(){ try{ const r=localStorage.getItem(WATCH_KEY); return r?JSON.parse(r):{tokens:[],wallets:[]}; }catch(e){ return {tokens:[],wallets:[]}; } }
+function saveWatch(w){ try{ localStorage.setItem(WATCH_KEY, JSON.stringify(w)); }catch(e){} }
+function loadBt(){ try{ const r=localStorage.getItem(BT_KEY); return r?JSON.parse(r):{bt:{},cat:{}}; }catch(e){ return {bt:{},cat:{}}; } }
+function saveBt(o){ try{ localStorage.setItem(BT_KEY, JSON.stringify(o)); }catch(e){} }
+
+async function fetchJSON(url, retries){
+  if(retries===undefined)retries=CONFIG.RETRY;
+  let lastErr=null;
+  for(let i=0;i<=retries;i++){
+    try{
+      const r=await fetch(url);
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return await r.json();
+    }catch(e){
+      lastErr=e;
+      if(i<retries) await new Promise(res=>setTimeout(res,1500*(i+1)));
+    }
+  }
+  throw lastErr;
+}
+
+const QUOTE_WHITELIST = ['USDC','USDT','DAI','WETH','ETH','WSOL','SOL','WBNB','BNB','AVAX','WAVAX','WMATIC','POL','WBTC','BTC','USD1','USDe'];
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+
+const CHAIN_COLORS={
+  ethereum:{bg:'rgba(98,126,234,.2)',border:'rgba(98,126,234,.5)',text:'#627EEA',label:'ETH'},
+  solana:{bg:'rgba(20,241,149,.2)',border:'rgba(20,241,149,.5)',text:'#14F195',label:'SOL'},
+  bsc:{bg:'rgba(243,186,47,.2)',border:'rgba(243,186,47,.5)',text:'#F3BA2F',label:'BSC'},
+  base:{bg:'rgba(0,82,255,.2)',border:'rgba(0,82,255,.5)',text:'#0052FF',label:'BASE'},
+  arbitrum:{bg:'rgba(40,160,240,.2)',border:'rgba(40,160,240,.5)',text:'#28A0F0',label:'ARB'},
+  polygon:{bg:'rgba(130,71,229,.2)',border:'rgba(130,71,229,.5)',text:'#8247E5',label:'MATIC'},
+  avalanche:{bg:'rgba(232,65,66,.2)',border:'rgba(232,65,66,.5)',text:'#E84142',label:'AVAX'},
+  optimism:{bg:'rgba(255,4,32,.2)',border:'rgba(255,4,32,.5)',text:'#FF0420',label:'OP'},
+  blast:{bg:'rgba(252,252,3,.2)',border:'rgba(252,252,3,.5)',text:'#FCFC03',label:'BLAST'},
+  linea:{bg:'rgba(97,223,255,.2)',border:'rgba(97,223,255,.5)',text:'#61dfff',label:'LINEA'},
+  scroll:{bg:'rgba(240,226,66,.2)',border:'rgba(240,226,66,.5)',text:'#F0E242',label:'SCROLL'},
+  zksync:{bg:'rgba(140,141,252,.2)',border:'rgba(140,141,252,.5)',text:'#8C8DFC',label:'ZK'},
+  fantom:{bg:'rgba(25,105,255,.2)',border:'rgba(25,105,255,.5)',text:'#1969FF',label:'FTM'},
+  cronos:{bg:'rgba(21,111,246,.2)',border:'rgba(21,111,246,.5)',text:'#156FF6',label:'CRO'},
+  celo:{bg:'rgba(53,208,127,.2)',border:'rgba(53,208,127,.5)',text:'#35D07F',label:'CELO'},
+  moonbeam:{bg:'rgba(83,203,201,.2)',border:'rgba(83,203,201,.5)',text:'#53CBC9',label:'GLMR'},
+  kava:{bg:'rgba(255,67,62,.2)',border:'rgba(255,67,62,.5)',text:'#FF433E',label:'KAVA'},
+  mantle:{bg:'rgba(124,227,176,.2)',border:'rgba(124,227,176,.5)',text:'#7CE3B0',label:'MANTLE'},
+  default:{bg:'rgba(107,114,128,.2)',border:'rgba(107,114,128,.5)',text:'#6B7280',label:'?'}
+};
+function getChainStyle(c){
+  const k=String(c||'').toLowerCase();
+  if(k.indexOf('sol')>-1)return CHAIN_COLORS.solana;
+  if(k.indexOf('bsc')>-1||k.indexOf('bnb')>-1)return CHAIN_COLORS.bsc;
+  if(k.indexOf('base')>-1)return CHAIN_COLORS.base;
+  if(k.indexOf('arb')>-1)return CHAIN_COLORS.arbitrum;
+  if(k.indexOf('polygon')>-1||k.indexOf('matic')>-1)return CHAIN_COLORS.polygon;
+  if(k.indexOf('avax')>-1)return CHAIN_COLORS.avalanche;
+  if(k.indexOf('optimism')>-1)return CHAIN_COLORS.optimism;
+  if(k.indexOf('blast')>-1)return CHAIN_COLORS.blast;
+  if(k.indexOf('linea')>-1)return CHAIN_COLORS.linea;
+  if(k.indexOf('scroll')>-1)return CHAIN_COLORS.scroll;
+  if(k.indexOf('zksync')>-1||k.indexOf('era')>-1)return CHAIN_COLORS.zksync;
+  if(k.indexOf('fantom')>-1)return CHAIN_COLORS.fantom;
+  if(k.indexOf('cronos')>-1)return CHAIN_COLORS.cronos;
+  if(k.indexOf('celo')>-1)return CHAIN_COLORS.celo;
+  if(k.indexOf('moonbeam')>-1)return CHAIN_COLORS.moonbeam;
+  if(k.indexOf('kava')>-1)return CHAIN_COLORS.kava;
+  if(k.indexOf('mantle')>-1)return CHAIN_COLORS.mantle;
+  if(k.indexOf('eth')>-1)return CHAIN_COLORS.ethereum;
+  return CHAIN_COLORS.default;
+}
+const CHAIN_TO_GORPLUS_ID = {
+  'ethereum':'1','eth':'1','bsc':'56','base':'8453',
+  'arbitrum':'42161','polygon':'137','polygon-pos':'137',
+  'avalanche':'43114','avax':'43114',
+  'optimism':'10','fantom':'250','linea':'59144','blast':'81457',
+  'scroll':'534352','zksync':'324','era':'324','cronos':'25',
+  'celo':'42220','moonbeam':'1284','kava':'2222','mantle':'5000',
+};
+const EVM_SELL = {
+  'ethereum':{rpc:'https://cloudflare-eth.com',router:'0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',wnat:'0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'},
+  'bsc':{rpc:'https://bsc-dataseed.binance.org',router:'0x10ED43C718714eb63d5aA57B78B54704E256024E',wnat:'0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'},
+};
+function explorerUrl(chain, addr){
+  const k=String(chain||'').toLowerCase();
+  if(k.indexOf('sol')>-1) return 'https://solscan.io/token/'+addr;
+  if(k.indexOf('eth')>-1) return 'https://etherscan.io/token/'+addr;
+  if(k.indexOf('bsc')>-1||k.indexOf('bnb')>-1) return 'https://bscscan.com/token/'+addr;
+  if(k.indexOf('base')>-1) return 'https://basescan.org/token/'+addr;
+  if(k.indexOf('arb')>-1) return 'https://arbiscan.io/token/'+addr;
+  if(k.indexOf('polygon')>-1||k.indexOf('matic')>-1) return 'https://polygonscan.com/token/'+addr;
+  if(k.indexOf('avax')>-1) return 'https://snowscan.xyz/token/'+addr;
+  if(k.indexOf('optimism')>-1) return 'https://optimistic.etherscan.io/token/'+addr;
+  if(k.indexOf('blast')>-1) return 'https://blastscan.io/token/'+addr;
+  if(k.indexOf('linea')>-1) return 'https://lineascan.build/token/'+addr;
+  if(k.indexOf('scroll')>-1) return 'https://scrollscan.com/token/'+addr;
+  return null;
+}
+function copyText(t){
+  try{
+    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t); return true; }
+  }catch(e){}
+  try{
+    const ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); return true;
+  }catch(e){ return false; }
+}
+function pad64(h){ h=h.replace('0x',''); return h.length>=64? h.slice(-64) : '0'.repeat(64-h.length)+h; }
+
+function fmtPrice(p){ if(p===null||p===undefined||p==='')return'-'; const v=+p; if(v>=1000)return'$'+v.toLocaleString('en-US',{maximumFractionDigits:0}); if(v>=1)return'$'+v.toFixed(2); if(v>=0.01)return'$'+v.toFixed(4); return'$'+v.toPrecision(3); }
+function fmtUsd(v){ if(!v)return'$0'; if(v>=1e9)return'$'+(v/1e9).toFixed(2)+'B'; if(v>=1e6)return'$'+(v/1e6).toFixed(1)+'M'; if(v>=1e3)return'$'+(v/1e3).toFixed(1)+'K'; return'$'+Math.round(v); }
+function fmtAge(ms){ const m=Math.floor(ms/60000); if(m<60)return m+' دقیقه'; const h=Math.floor(m/60); if(h<24)return h+' ساعت'; return Math.floor(h/24)+' روز'; }
+function scoreColor(s){ return s>=75?'#10b981':s>=50?'#f59e0b':s>=30?'#3b82f6':'#6b7280'; }
+function shortAddr(a){ if(!a)return'?'; return a.slice(0,4)+'...'+a.slice(-4); }
+function tierStyle(t){
+  if(t===1)return {background:'rgba(251,191,36,.2)',border:'1px solid rgba(251,191,36,.5)',color:'#fde68a'};
+  if(t===2)return {background:'rgba(34,211,238,.15)',border:'1px solid rgba(34,211,238,.4)',color:'#a5f3fc'};
+  return {background:'rgba(107,114,128,.15)',border:'1px solid rgba(107,114,128,.4)',color:'#9ca3af'};
+}
+function lvlColor(l){ return l==='ok'?'#86efac': l==='warn'?'#fde68a': l==='bad'?'#fca5a5':'#9ca3af'; }
+function lvlIcon(l){ return l==='ok'?'✅': l==='warn'?'⚠️': l==='bad'?'🚨':'❓'; }
+function playAlertSound(){
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC)return;
+    const ctx=new AC();
+    const o=ctx.createOscillator();
+    const g=ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.type='sine'; o.frequency.value=880;
+    g.gain.setValueAtTime(0.3,ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01,ctx.currentTime+0.5);
+    o.start(ctx.currentTime); o.stop(ctx.currentTime+0.5);
+  }catch(e){}
+}
+
+function computeRiskMode(global, chains){
+  let score=50;
+  if(global){ score += (global.market_cap_change_percentage_24h_usd||0)*4; }
+  if(chains&&chains.length){
+    const avg=chains.reduce(function(s,c){return s+(c.chg||0);},0)/chains.length;
+    score += avg*2;
+  }
+  if(global&&global.market_cap_percentage&&global.market_cap_percentage.btc>55){ score-=5; }
+  return clamp(Math.round(score),0,100);
+}
+function riskModeLabel(v){
+  if(v>=65)return {label:'🟢 ریسک‌پذیر',color:'#10b981'};
+  if(v>=40)return {label:'🟡 خنثی',color:'#f59e0b'};
+  return {label:'🔴 ریسک‌گریز',color:'#ef4444'};
+}
+function calcComposite(it, sec, pro, ee, confl, riskVal){
+  let c=0;
+  c += (it.score||0)*0.25;
+  c += (ee? ee.score:0)*0.25;
+  const secScore = sec? (100-sec.risk):50;
+  c += secScore*0.20;
+  c += Math.min(100,(confl||0)*25)*0.15;
+  c += (riskVal||50)*0.15;
+  return clamp(Math.round(c),0,100);
+}
+function calcPlan(it){
+  const entry=it.price||0;
+  if(!entry)return null;
+  const sl=entry*0.85;
+  const tp2=entry*1.5;
+  const risk=entry-sl;
+  const reward=tp2-entry;
+  const rr= risk>0? (reward/risk):0;
+  const liq=it.liq||0;
+  const slip= liq>0? Math.min(50,(1000/liq)*100):50;
+  return {entry:entry,sl:sl,tp2:tp2,rr:rr,slip:slip,liqOk:slip<5};
+}
+function buildChecklist(it, sec, pro, plan, confl, riskOn, riskInfo, chainSupported){
+  const rows=[];
+  if(sec && sec.checked){
+    if(sec.dangerous) rows.push({lvl:'bad',t:'امنیت: خطرناک (ریسک '+sec.risk+')'});
+    else if(sec.safe) rows.push({lvl:'ok',t:'امنیت: امن (ریسک '+sec.risk+')'});
+    else rows.push({lvl:'warn',t:'امنیت: متوسط (ریسک '+sec.risk+')'});
+  } else {
+    rows.push({lvl:'na',t: chainSupported? 'امنیت: هنوز چک نشده' : 'امنیت: برای این زنجیره در دسترس نیست'});
+  }
+  if(pro && pro.sellable===true) rows.push({lvl:'ok',t:'قابل‌فروش بودن: تأیید (Jupiter)'});
+  else if(pro && pro.sellable===false) rows.push({lvl:'bad',t:'قابل‌فروش بودن: غیرقابل فروش!'});
+  else if(pro && pro.evmSellable===true) rows.push({lvl:'ok',t:'مسیر فروش وجود دارد (شبیه‌سازی EVM)'});
+  else if(pro && pro.evmSellable===false) rows.push({lvl:'bad',t:'مسیر فروش پیدا نشد (شبیه‌سازی EVM)'});
+  else rows.push({lvl:'na',t:'قابل‌فروش بودن: نامشخص'});
+  const liq=it.liq||0;
+  if(liq>=25000) rows.push({lvl:'ok',t:'نقدینگی: عالی ('+fmtUsd(liq)+')'});
+  else if(liq>=10000) rows.push({lvl:'ok',t:'نقدینگی: خوب ('+fmtUsd(liq)+')'});
+  else if(liq>=5000) rows.push({lvl:'warn',t:'نقدینگی: کم ('+fmtUsd(liq)+')'});
+  else rows.push({lvl:'bad',t:'نقدینگی: خیلی کم ('+fmtUsd(liq)+')'});
+  if(plan){
+    if(plan.slip<1) rows.push({lvl:'ok',t:'اسلیپیج تخمینی: '+plan.slip.toFixed(1)+'%'});
+    else if(plan.slip<5) rows.push({lvl:'warn',t:'اسلیپیج تخمینی: '+plan.slip.toFixed(1)+'%'});
+    else rows.push({lvl:'bad',t:'اسلیپیج تخمینی: '+plan.slip.toFixed(1)+'% (خیلی بالا)'});
+  }
+  if(pro && pro.concentration!==undefined){
+    const cc=pro.concentration;
+    if(cc<0.5) rows.push({lvl:'ok',t:'تمرکز هولدرها: '+Math.round(cc*100)+'%'});
+    else if(cc<0.7) rows.push({lvl:'warn',t:'تمرکز هولدرها: '+Math.round(cc*100)+'%'});
+    else rows.push({lvl:'bad',t:'تمرکز هولدرها: '+Math.round(cc*100)+'% (خیلی بالا)'});
+  }
+  if(confl>0) rows.push({lvl:'ok',t:confl+' کیف‌پول هوشمند روی این توکن'});
+  else rows.push({lvl:'na',t:'تأیید نهنگ: ندارد'});
+  rows.push({lvl: riskOn? (riskInfo.color==='#10b981'?'ok': riskInfo.color==='#f59e0b'?'warn':'bad') : 'na', t:'بازار: '+riskInfo.label+(riskOn?'':' (غیرفعال دستی)')});
+  if(plan) rows.push({lvl:'warn',t:'پیشنهاد: فقط ۱-۲٪ سرمایه + SL روی '+fmtPrice(plan.sl)});
+  const bad=rows.filter(function(r){return r.lvl==='bad';}).length;
+  const warn=rows.filter(function(r){return r.lvl==='warn';}).length;
+  let verdict, vlvl;
+  if(bad>0){ verdict='🚨 نخر: '+bad+' مورد خطرناک'; vlvl='bad'; }
+  else if(warn>0){ verdict='⚠️ با احتیاط و حجم خیلی کم بخر'; vlvl='warn'; }
+  else { verdict='✅ شرایط نسبتاً خوب (هنوز تضمین نیست)'; vlvl='ok'; }
+  rows.forEach(function(r){ r.icon=lvlIcon(r.lvl); });
+  return {rows:rows, verdict:verdict, vlvl:vlvl};
+}
+
+async function fetchGoPlus(chainId, addresses){
+  const url='https://api.gopluslabs.io/api/v1/token_security/'+chainId+'?contract_addresses='+addresses.join(',');
+  const r=await fetch(url); if(!r.ok) throw new Error('GoPlus HTTP '+r.status);
+  const j=await r.json(); return j.result||{};
+}
+async function fetchRugCheck(mint){
+  const url='https://api.rugcheck.xyz/v1/tokens/'+mint+'/report/summary';
+  const r=await fetch(url); if(!r.ok) throw new Error('RugCheck HTTP '+r.status);
+  return await r.json();
+}
+async function evmSellTest(cfg, token){
+  const data='0xd06ca61f'+pad64('de0b6b3a7640000')+pad64('40')+pad64('2')+pad64(token)+pad64(cfg.wnat);
+  const body={jsonrpc:'2.0',id:1,method:'eth_call',params:[{to:cfg.router,data:data},'latest']};
+  const r=await fetch(cfg.rpc,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok) throw new Error('rpc');
+  const j=await r.json();
+  if(j.error||!j.result||j.result==='0x') return false;
+  const hex=j.result.replace('0x','');
+  if(hex.length<64) return false;
+  return parseInt(hex.slice(-64),16)>0;
+}
+function analyzeGoPlus(addr,data){
+  const signals=[]; let risk=0; const d=data||{};
+  if(d.is_honeypot==='1'){risk+=60;signals.push({icon:'🚨',label:'Honeypot',danger:true});}
+  else if(d.is_honeypot==='0'){signals.push({icon:'✅',label:'قابل فروش',good:true});}
+  if(d.is_mintable==='1'){risk+=25;signals.push({icon:'🚨',label:'قابل چاپ مجدد',danger:true});}
+  if(d.is_proxy==='1'){risk+=15;signals.push({icon:'⚠️',label:'قرارداد قابل تغییر',danger:true});}
+  const owner=(d.owner_address||'').toLowerCase();
+  const ren=!owner||owner==='0x0000000000000000000000000000000000000000'||owner==='0x000000000000000000000000000000000000dead';
+  if(ren){signals.push({icon:'✅',label:'مالکیت واگذار شده',good:true});}else{risk+=10;signals.push({icon:'⚠️',label:'مالکیت فعال'});}
+  const lpH=Array.isArray(d.lp_holders)?d.lp_holders:[]; let lpL=0;
+  lpH.forEach(function(h){ if(h.is_locked===1||h.is_locked==='1')lpL+=parseFloat(h.percent||0); });
+  if(lpL>0.8){signals.push({icon:'✅',label:'LP قفل '+Math.round(lpL*100)+'%',good:true});}
+  else if(lpL<0.3&&lpH.length>0){risk+=15;signals.push({icon:'🚨',label:'LP قفل نشده',danger:true});}
+  const bt=parseFloat(d.buy_tax||0)*100, st=parseFloat(d.sell_tax||0)*100;
+  if(bt>10||st>10){risk+=20;signals.push({icon:'🚨',label:'مالیات بالا',danger:true});}
+  else if(bt>5||st>5){risk+=5;signals.push({icon:'⚠️',label:'مالیات متوسط'});}
+  const hd=Array.isArray(d.holders)?d.holders:[]; let t10=0;
+  hd.slice(0,10).forEach(function(h){t10+=parseFloat(h.percent||0);});
+  if(t10>0.8){risk+=15;signals.push({icon:'🚨',label:'تمرکز هولدر '+Math.round(t10*100)+'%',danger:true});}
+  return {risk:Math.min(100,risk),signals:signals,safe:risk<30,dangerous:risk>60,checked:true,ts:Date.now()};
+}
+function analyzeRugCheck(data){
+  const signals=[]; let risk=0; const d=data||{}; const tk=d.token||{}; const rs=Array.isArray(d.risks)?d.risks:[];
+  if(typeof d.score_norm==='number')risk=Math.min(100,Math.round(d.score_norm));
+  if(tk.mintAuthority){risk+=25;signals.push({icon:'🚨',label:'Mint Authority فعال',danger:true});}else{signals.push({icon:'✅',label:'بدون Mint Authority',good:true});}
+  if(tk.freezeAuthority){risk+=25;signals.push({icon:'🚨',label:'Freeze Authority فعال',danger:true});}else{signals.push({icon:'✅',label:'بدون Freeze Authority',good:true});}
+  const th=Array.isArray(d.topHolders)?d.topHolders:[]; let t10=0;
+  th.slice(0,10).forEach(function(h){t10+=(h.pct||0);});
+  if(t10>50){risk+=15;signals.push({icon:'🚨',label:'تمرکز هولدر '+t10.toFixed(1)+'%',danger:true});}
+  rs.forEach(function(r){ if(r.level==='danger'){risk+=10;signals.push({icon:'🚨',label:r.name||r.description,danger:true});} else if(r.level==='warn'){risk+=5;signals.push({icon:'⚠️',label:r.name||r.description});} });
+  return {risk:Math.min(100,risk),signals:signals,safe:risk<30,dangerous:risk>60,checked:true,ts:Date.now()};
+}
+
+async function jupPrice(ids,key){
+  const url='https://api.jup.ag/price/v2?ids='+ids.join(',');
+  const h=key?{'x-api-key':key}:{};
+  const r=await fetch(url,{headers:h}); if(!r.ok) throw new Error('Jup HTTP '+r.status);
+  const j=await r.json(); return j.data||{};
+}
+async function jupSellTest(mint,key){
+  const url='https://api.jup.ag/swap/v1/quote?inputMint='+mint+'&outputMint='+USDC+'&amount=1000000&slippageBps=100';
+  const h=key?{'x-api-key':key}:{};
+  const r=await fetch(url,{headers:h});
+  if(!r.ok) return {sellable:false};
+  const j=await r.json();
+  return {sellable: !!(j&&j.outAmount)};
+}
+async function heliusHolders(mint,key){
+  const url='https://mainnet.helius-rpc.com/?api-key='+key;
+  const body={jsonrpc:'2.0',id:1,method:'getTokenAccounts',params:{mint:mint,limit:20,sortBy:{sortBy:'amount',sortDirection:'desc'}}};
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok) throw new Error('Helius HTTP '+r.status);
+  const j=await r.json();
+  const accs=(j.result&&j.result.token_accounts)||[];
+  let total=0; accs.forEach(function(a){total+=(a.amount||0);});
+  let top=0; accs.slice(0,10).forEach(function(a){top+=(a.amount||0);});
+  const conc= total>0? (top/total) : 0;
+  return {concentration:conc, holders:accs.length};
+}
+async function discoverTokenHolders(mint,key){
+  const url='https://mainnet.helius-rpc.com/?api-key='+key;
+  const body={jsonrpc:'2.0',id:1,method:'getTokenAccounts',params:{mint:mint,limit:20,sortBy:{sortBy:'amount',sortDirection:'desc'}}};
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok) throw new Error('Helius HTTP '+r.status);
+  const j=await r.json();
+  return (j.result&&j.result.token_accounts)||[];
+}
+
+function calcEarlyEntryScore(it, sec, pro){
+  let score=0;
+  const reasons=[];
+  if(sec && sec.dangerous) return {score:0, blocked:true, signals:[]};
+  if(pro && pro.sellable===false) return {score:0, blocked:true, signals:[]};
+  if(it.ageMs){
+    const ageMin=it.ageMs/60000;
+    if(ageMin<30){score+=25;reasons.push('خیلی تازه');}
+    else if(ageMin<60){score+=20;reasons.push('تازه');}
+    else if(ageMin<180){score+=12;}
+    else{score+=5;}
+  }
+  if(sec && sec.checked){
+    if(sec.safe){score+=30;reasons.push('امنیت تأیید');}
+    else{score+=15;}
+  } else { score+=10; }
+  if(pro && pro.sellable===true){score+=10;reasons.push('قابل فروش');}
+  if(pro && pro.concentration>0.7){score-=15;reasons.push('تمرکز بالا');}
+  if(it.signals){
+    it.signals.forEach(function(s){
+      if(s.label.indexOf('حجم')>-1||s.label.indexOf('اسپایک')>-1){score+=10;reasons.push('حجم قوی');}
+      if(s.label.indexOf('خرید')>-1){score+=10;reasons.push('فشار خرید');}
+      if(s.label.indexOf('مومنتوم')>-1||s.label.indexOf('شتاب')>-1){score+=8;reasons.push('مومنتوم');}
+    });
+  }
+  if(it.liq>=25000){score+=10;}
+  else if(it.liq>=10000){score+=7;}
+  else if(it.liq>=5000){score+=4;}
+  score+=Math.min(10, Math.floor((it.score||0)/10));
+  return {score:Math.min(100,score), blocked:false, signals:reasons};
+}
+
+function analyzeItem(it,hist){
+  const signals=[]; let score=0;
+  const vol5=it.vol5||0, vol1=it.vol1||0, avg5=vol1/12;
+  const liq=it.liq||0;
+  const buys5=it.buys5||0, sells5=it.sells5||0, total5=buys5+sells5;
+  const buyRatio= total5>0? buys5/total5 : 0.5;
+  const chg5=it.chg5||0, chg1=it.chg1||0;
+  const volLiq= liq>0? vol5/liq : 0;
+  if(avg5>0){ const r=vol5/avg5;
+    if(r>3){score+=30;signals.push({icon:'🔥',label:'اسپایک شدید حجم'});}
+    else if(r>2){score+=20;signals.push({icon:'📈',label:'افزایش قوی حجم'});}
+    else if(r>1.4){score+=10;signals.push({icon:'📊',label:'رشد حجم'});}
+  }
+  if(volLiq>1){score+=15;signals.push({icon:'💧',label:'گردش بالا'});}
+  else if(volLiq>0.5){score+=8;}
+  if(chg5>5&&chg5>(chg1/12)*2){score+=20;signals.push({icon:'⚡',label:'شتاب قیمت'});}
+  else if(chg5>2){score+=12;signals.push({icon:'📶',label:'مومنتوم مثبت'});}
+  if(total5>=20&&buyRatio>0.65){score+=20;signals.push({icon:'🐂',label:'فشار خرید قوی'});}
+  else if(total5>=10&&buyRatio>0.55){score+=10;signals.push({icon:'🟢',label:'خرید غالب'});}
+  if(volLiq>0.3&&Math.abs(chg5)<2&&buyRatio>=0.5&&total5>=20){score+=20;signals.push({icon:'🐋',label:'انباشت نهنگ'});}
+  if(hist&&hist.length>=3){ const pm=Math.max.apply(null,hist.slice(0,-1).map(function(h){return h.price;})); if(it.price>pm*1.01){score+=20;signals.push({icon:'💥',label:'شکست مقاومت'});} }
+  if(chg1>5&&chg1<15){score+=10;signals.push({icon:'🚀',label:'حرکت قوی ۲۴س'});}
+  if(chg5<-5){score-=15;signals.push({icon:'⚠️',label:'فشار فروش'});}
+  if(total5>=10&&buyRatio<0.35){score-=10;}
+  return {score:clamp(Math.round(score),0,100),signals:signals};
+}
+function calcTrustDex(p){
+  let t=0; const badges=[];
+  const liq=(p.liquidity&&p.liquidity.usd)||p.liq||0;
+  if(liq>=25000){t+=30;badges.push({icon:'💎',label:'نقدینگی عالی'});}
+  else if(liq>=10000){t+=22;badges.push({icon:'💎',label:'نقدینگی خوب'});}
+  else if(liq>=5000){t+=12;badges.push({icon:'💎',label:'نقدینگی قابل قبول'});}
+  let social=0;
+  if(p.info&&p.info.websites&&p.info.websites.length){social++;badges.push({icon:'🌐',label:'وب‌سایت'});}
+  const types=((p.info&&p.info.socials)||[]).map(function(s){return s.type;});
+  if(types.indexOf('twitter')>-1){social++;badges.push({icon:'🐦',label:'توییتر'});}
+  if(types.indexOf('telegram')>-1){social++;badges.push({icon:'✈️',label:'تلگرام'});}
+  t+=Math.min(20,social*10);
+  const boosts=(p.boosts&&p.boosts.total)||0;
+  if(boosts>=10){t+=10;}else if(boosts>=3){t+=6;}else if(boosts>=1){t+=3;}
+  const fdv=p.fdv||0; if(fdv>=1e5&&fdv<=1e7){t+=10;}
+  const tx=(((p.txns&&p.txns.h1)&&p.txns.h1.buys)||0)+(((p.txns&&p.txns.h1)&&p.txns.h1.sells)||0)||(((p.txns&&p.txns.m5)&&p.txns.m5.buys)||0)+(((p.txns&&p.txns.m5)&&p.txns.m5.sells)||0);
+  if(tx>=500){t+=10;}else if(tx>=200){t+=6;}else if(tx>=100){t+=3;}
+  return {trust:clamp(t,0,100),badges:badges};
+}
+function calcTrustCex(vol24){
+  let t=40; const badges=[{icon:'🏦',label:'صرافی متمرکز'}];
+  if(vol24>=1e8){t+=30;badges.push({icon:'💎',label:'حجم عالی'});}
+  else if(vol24>=1e7){t+=22;badges.push({icon:'💎',label:'حجم خوب'});}
+  else if(vol24>=1e6){t+=12;}
+  return {trust:clamp(t,0,100),badges:badges};
+}
+function categorize(c){
+  const s=new Set();
+  if(c.score>=CONFIG.TOP_SCORE_THRESHOLD)s.add('top');
+  if(c.score>=50)s.add('signals');
+  if(c.signals.some(function(x){return x.label.indexOf('انباشت')>-1;}))s.add('accumulation');
+  if(c.signals.some(function(x){return x.label.indexOf('شکست')>-1;}))s.add('breakout');
+  if(c.signals.some(function(x){return x.label.indexOf('حجم')>-1||x.label.indexOf('اسپایک')>-1||x.label.indexOf('گردش')>-1;}))s.add('volume');
+  return s;
+}
+
+async function fetchDexScreener(){
+  const res=await Promise.allSettled([
+    fetchJSON('https://api.dexscreener.com/token-boosts/latest/v1'),
+    fetchJSON('https://api.dexscreener.com/token-profiles/latest/v1')
+  ]);
+  const found=[]; const seen=new Set();
+  function push(j){ (Array.isArray(j)?j:[]).forEach(function(t){ if(t.tokenAddress&&!seen.has(t.tokenAddress)){seen.add(t.tokenAddress);found.push(t.tokenAddress);} }); }
+  if(res[0].status==='fulfilled')push(res[0].value);
+  if(res[1].status==='fulfilled')push(res[1].value);
+  const addrs=found.slice(0,90);
+  const chunks=[]; for(let i=0;i<addrs.length;i+=30)chunks.push(addrs.slice(i,i+30));
+  const tres=await Promise.allSettled(chunks.map(function(c){return fetchJSON('https://api.dexscreener.com/latest/dex/tokens/'+c.join(','));}));
+  const items=[]; const now=Date.now();
+  tres.forEach(function(r){
+    if(r.status!=='fulfilled')return;
+    const pairs=Array.isArray(r.value)?r.value:((r.value&&r.value.pairs)||[]);
+    pairs.forEach(function(pr){
+      if(!pr.pairCreatedAt)return;
+      const age=(now-pr.pairCreatedAt)/60000;
+      if(age<CONFIG.MIN_AGE_MIN||age>CONFIG.MAX_AGE_MIN)return;
+      const liq=(pr.liquidity&&pr.liquidity.usd)||0;
+      if(liq<CONFIG.MIN_LIQUIDITY)return;
+      if(QUOTE_WHITELIST.indexOf(pr.quoteToken&&pr.quoteToken.symbol)<0)return;
+      const tr=calcTrustDex(pr);
+      if(tr.trust<CONFIG.MIN_TRUST)return;
+      items.push({key:'ds_'+pr.pairAddress,source:'dexscreener',kind:'birth',
+        symbol:(pr.baseToken&&pr.baseToken.symbol)||'?',name:(pr.baseToken&&pr.baseToken.name)||'?',
+        chain:pr.chainId,dex:pr.dexId,url:pr.url,icon:(pr.info&&pr.info.imageUrl)||null,
+        contractAddress:(pr.baseToken&&pr.baseToken.address)||null,
+        price:+pr.priceUsd||0,liq:liq,fdv:pr.fdv||0,
+        vol5:(pr.volume&&pr.volume.m5)||0,vol1:(pr.volume&&pr.volume.h1)||0,
+        buys5:(pr.txns&&pr.txns.m5&&pr.txns.m5.buys)||0,sells5:(pr.txns&&pr.txns.m5&&pr.txns.m5.sells)||0,
+        chg5:(pr.priceChange&&pr.priceChange.m5)||0,chg1:(pr.priceChange&&pr.priceChange.h1)||0,
+        ageMs:now-pr.pairCreatedAt,trust:tr.trust,badges:tr.badges});
+    });
+  });
+  return items;
+}
+async function fetchGeckoTerminal(){
+  const nets=['solana','eth','bsc','base'];
+  const jobs=[];
+  nets.forEach(function(n){ [1,2,3].forEach(function(pg){ jobs.push({n:n,p:fetchJSON('https://api.geckoterminal.com/api/v2/networks/'+n+'/new_pools?page='+pg,1)}); }); });
+  const res=await Promise.allSettled(jobs.map(function(j){return j.p;}));
+  const items=[]; const now=Date.now();
+  res.forEach(function(r,i){
+    if(r.status!=='fulfilled')return;
+    const net=jobs[i].n; const j=r.value; const inc=j.included||[];
+    const sym={}; const dexN={}; const addrs={};
+    inc.forEach(function(o){ if(o.type==='token'){sym[o.id]=o.attributes&&o.attributes.symbol;addrs[o.id]=o.id.split('_')[1];} if(o.type==='dex')dexN[o.id]=o.attributes&&o.attributes.name; });
+    (j.data||[]).forEach(function(p){
+      const a=p.attributes||{};
+      const created=Date.parse(a.pool_created_at); if(!created)return;
+      const age=(now-created)/60000;
+      if(age<CONFIG.MIN_AGE_MIN||age>CONFIG.MAX_AGE_MIN)return;
+      const liq=+a.reserve_in_usd||0; if(liq<CONFIG.MIN_LIQUIDITY)return;
+      const nameParts=String(a.name||'').split(' / ');
+      const baseId=(p.relationships&&p.relationships.base_token&&p.relationships.base_token.data)?p.relationships.base_token.data.id:'';
+      const quoteId=(p.relationships&&p.relationships.quote_token&&p.relationships.quote_token.data)?p.relationships.quote_token.data.id:'';
+      const baseSym=sym[baseId]||nameParts[0]||'?';
+      const quoteSym=sym[quoteId]||nameParts[1]||'';
+      if(QUOTE_WHITELIST.indexOf(quoteSym)<0)return;
+      const dex=(p.relationships&&p.relationships.dex&&p.relationships.dex.data&&dexN[p.relationships.dex.data.id])||'DEX';
+      const pc=a.price_change_percentage||{};
+      const tr=a.transactions&&a.transactions.m5?a.transactions.m5:{};
+      items.push({key:'gt_'+net+'_'+a.address,source:'geckoterminal',kind:'birth',
+        symbol:baseSym,name:a.name||baseSym,chain:net,dex:dex,
+        url:'https://www.geckoterminal.com/'+net+'/pools/'+a.address,icon:null,
+        contractAddress:addrs[baseId]||null,
+        price:+a.base_token_price_usd||0,liq:liq,fdv:+a.fdv_usd||0,
+        vol5:+(a.volume_usd&&a.volume_usd.m5)||0,vol1:+(a.volume_usd&&a.volume_usd.h1)||0,
+        buys5:tr.buys||0,sells5:tr.sells||0,
+        chg5:+pc.m5||0,chg1:+pc.h1||0,
+        ageMs:now-created,trust:clamp(40+(liq>=10000?20:liq>=5000?10:0),0,100),
+        badges: liq>=10000?[{icon:'💎',label:'نقدینگی خوب'}]:[{icon:'💎',label:'نقدینگی قابل قبول'}]});
+    });
+  });
+  return items;
+}
+async function fetchBybit(){
+  const j=await fetchJSON('https://api.bybit.com/v5/market/tickers?category=spot');
+  if(j.retCode!==0) throw new Error(j.retMsg||'Bybit');
+  return ((j.result&&j.result.list)||[]).filter(function(t){return t.symbol.indexOf('USDT')===t.symbol.length-4&&+t.turnover24h>1e6;})
+    .sort(function(a,b){return +b.turnover24h-+a.turnover24h;}).slice(0,80).map(function(t){
+      const base=t.symbol.replace('USDT','');
+      return {key:'bybit_'+t.symbol,source:'bybit',kind:'cex',symbol:base,name:t.symbol,chain:'Bybit',dex:'Bybit',
+        url:'https://www.bybit.com/en/trade/spot/'+base+'/USDT',icon:null,contractAddress:null,
+        price:+t.lastPrice||0,liq:0,fdv:0,vol5:(+t.turnover24h||0)/288,vol1:(+t.turnover24h||0)/12,
+        buys5:0,sells5:0,chg5:0,chg1:(+t.price24hPcnt||0)*100,ageMs:null,
+        trust:calcTrustCex(+t.turnover24h||0).trust,badges:calcTrustCex(+t.turnover24h||0).badges};
+    });
+}
+async function fetchOKX(){
+  const j=await fetchJSON('https://www.okx.com/api/v5/market/tickers?instType=SPOT');
+  if(j.code!=='0') throw new Error(j.msg||'OKX');
+  return (j.data||[]).filter(function(t){return t.instId.indexOf('-USDT')>-1&&+t.volCcy24h>1e6;})
+    .sort(function(a,b){return +b.volCcy24h-+a.volCcy24h;}).slice(0,80).map(function(t){
+      const base=t.instId.replace('-USDT','');
+      const last=+t.last||0, open=+t.open24h||0;
+      return {key:'okx_'+t.instId,source:'okx',kind:'cex',symbol:base,name:t.instId,chain:'OKX',dex:'OKX',
+        url:'https://www.okx.com/trade-spot/'+t.instId.toLowerCase(),icon:null,contractAddress:null,
+        price:last,liq:0,fdv:0,vol5:(+t.volCcy24h||0)/288,vol1:(+t.volCcy24h||0)/12,
+        buys5:0,sells5:0,chg5:0,chg1: open?((last-open)/open)*100:0,ageMs:null,
+        trust:calcTrustCex(+t.volCcy24h||0).trust,badges:calcTrustCex(+t.volCcy24h||0).badges};
+    });
+}
+async function fetchGate(){
+  const j=await fetchJSON('https://api.gateio.ws/api/v4/spot/tickers');
+  return (Array.isArray(j)?j:[]).filter(function(t){return t.currency_pair.indexOf('_USDT')>-1&&+t.quote_volume>1e6;})
+    .sort(function(a,b){return +b.quote_volume-+a.quote_volume;}).slice(0,80).map(function(t){
+      return {key:'gate_'+t.currency_pair,source:'gate',kind:'cex',symbol:t.currency_pair.replace('_USDT',''),name:t.currency_pair,chain:'Gate',dex:'Gate.io',
+        url:'https://www.gate.io/trade/'+t.currency_pair,icon:null,contractAddress:null,
+        price:+t.last||0,liq:0,fdv:0,vol5:(+t.quote_volume||0)/288,vol1:(+t.quote_volume||0)/12,
+        buys5:0,sells5:0,chg5:0,chg1:+t.change_percentage||0,ageMs:null,
+        trust:calcTrustCex(+t.quote_volume||0).trust,badges:calcTrustCex(+t.quote_volume||0).badges};
+    });
+}
+async function fetchLlama(){
+  const j=await fetchJSON('https://api.llama.fi/chains',1);
+  const top=(Array.isArray(j)?j:[]).sort(function(a,b){return b.tvl-a.tvl;}).slice(0,8);
+  const hist=await Promise.allSettled(top.map(function(c){return fetchJSON('https://api.llama.fi/v2/historicalChainTvl/'+encodeURIComponent(c.name),0);}));
+  return top.map(function(c,i){
+    let chg=0;
+    if(hist[i].status==='fulfilled'){ const arr=hist[i].value; if(arr&&arr.length>1){ const la=arr[arr.length-1].tvl!=null?arr[arr.length-1].tvl:arr[arr.length-1].total; const pv=arr[arr.length-2].tvl!=null?arr[arr.length-2].tvl:arr[arr.length-2].total; chg=pv?((la-pv)/pv)*100:0; } }
+    return {key:'llama_'+c.name,name:c.name,tvl:c.tvl,chg:chg,symbol:c.tokenSymbol||''};
+  });
+}
+async function fetchGlobal(){
+  const j=await fetchJSON('https://api.coingecko.com/api/v3/global');
+  if(!j.data) throw new Error('داده نامعتبر CoinGecko');
+  return j.data;
+}
+
+function App(){
+  const [items,setItems]=useState([]);
+  const [chains,setChains]=useState([]);
+  const [global,setGlobal]=useState(null);
+  const [live,setLive]=useState([]);
+  const [src,setSrc]=useState({});
+  const [sourceStats,setSourceStats]=useState({});
+  const [sourceFilter,setSourceFilter]=useState('all');
+  const [activeTab,setActiveTab]=useState('early');
+  const [status,setStatus]=useState({connected:false,loading:true,error:null});
+  const [lastUpdate,setLastUpdate]=useState(null);
+  const [countdown,setCountdown]=useState(CONFIG.POLL_INTERVAL);
+  const [search,setSearch]=useState('');
+  const [displayCount,setDisplayCount]=useState(CONFIG.MAX_PER_TAB);
+  const [securityData,setSecurityData]=useState({});
+  const [proData,setProData]=useState({});
+  const [keys,setKeys]=useState(loadKeys());
+  const [keyDraft,setKeyDraft]=useState(loadKeys());
+  const [settings,setSettings]=useState(loadSettings());
+  const [soundOn,setSoundOn]=useState(settings.soundOn!==false);
+  const [backtestOn,setBacktestOn]=useState(settings.backtestOn!==false);
+  const [paperOn,setPaperOn]=useState(settings.paperOn!==false);
+  const [riskModeOn,setRiskModeOn]=useState(settings.riskModeOn!==false);
+  const [includeKeys,setIncludeKeys]=useState(false);
+  const [saveFlash,setSaveFlash]=useState(false);
+  const [saveMsg,setSaveMsg]=useState('');
+  const [alertBanner,setAlertBanner]=useState(null);
+  const [alertHistory,setAlertHistory]=useState([]);
+  const [wallets,setWallets]=useState({});
+  const [walletSearch,setWalletSearch]=useState('');
+  const [watch,setWatch]=useState(loadWatch());
+  const [btStats,setBtStats]=useState({total:0,wins:0,open:0});
+  const [btCatStats,setBtCatStats]=useState({});
+  const [paperStats,setPaperStats]=useState({equity:CONFIG.PAPER_CAPITAL,open:0,realized:0});
+  const [secBump,setSecBump]=useState(0);
+  const [checklistOpen,setChecklistOpen]=useState(null);
+
+  const trackedRef=useRef(new Map());
+  const historyRef=useRef({});
+  const liveRef=useRef(new Map());
+  const wsRef=useRef(null);
+  const wsOkRef=useRef(false);
+  const securityCacheRef=useRef({});
+  const proCacheRef=useRef({});
+  const alertedRef=useRef({});
+  const walletsRef=useRef({});
+  const walletLastRunRef=useRef(0);
+  const earlyRef=useRef([]);
+  const itemsRef=useRef([]);
+  const btRef=useRef({});
+  const btCatRef=useRef({});
+  const paperRef=useRef({cash:CONFIG.PAPER_CAPITAL,positions:{},realized:0});
+  const fileInputRef=useRef(null);
+  const forceRecheckRef=useRef({});
+
+  useEffect(function(){
+    const saved=loadLS();
+    if(saved){ try{ trackedRef.current=new Map(saved.tracked||[]); historyRef.current=saved.history||{}; }catch(e){} }
+    securityCacheRef.current=loadSecurityCache();
+    proCacheRef.current=loadProCache();
+    alertedRef.current=loadAlerted();
+    walletsRef.current=loadWallets();
+    const bt=loadBt();
+    btRef.current=bt.bt||{};
+    btCatRef.current=bt.cat||{};
+    setSecurityData(Object.assign({},securityCacheRef.current));
+    setProData(Object.assign({},proCacheRef.current));
+    setWallets(Object.assign({},walletsRef.current));
+    setBtCatStats(Object.assign({},btCatRef.current));
+    const ks=Object.keys(btRef.current);
+    const doneList=ks.filter(function(k){return btRef.current[k].done;});
+    const wins=doneList.filter(function(k){return btRef.current[k].results&&btRef.current[k].results[60]===true;}).length;
+    setBtStats({total:doneList.length,wins:wins,open:ks.length-doneList.length});
+    const warm=[];
+    trackedRef.current.forEach(function(e){ if(e.lastItem) warm.push(e.lastItem); });
+    warm.sort(function(a,b){return (b.firstSeen||0)-(a.firstSeen||0);});
+    if(warm.length){ setItems(warm.slice(0,CONFIG.MAX_TRACKED)); }
+  },[]);
+
+  function flash(msg){ setSaveMsg(msg); setSaveFlash(true); setTimeout(function(){setSaveFlash(false);},1800); }
+  function persistSettings(over){
+    const st=Object.assign({soundOn:soundOn,backtestOn:backtestOn,paperOn:paperOn,riskModeOn:riskModeOn},over||{});
+    setSettings(st); saveSettings(st); return st;
+  }
+  function handleManualSave(){
+    const now=Date.now();
+    saveLS({tracked:Array.from(trackedRef.current.entries()),history:historyRef.current,savedAt:now});
+    saveSecurityCache(securityCacheRef.current);
+    saveProCache(proCacheRef.current);
+    saveKeys(keys);
+    saveAlerted(alertedRef.current);
+    saveWallets(walletsRef.current);
+    saveWatch(watch);
+    saveBt({bt:btRef.current,cat:btCatRef.current});
+    flash('✅ اطلاعات ذخیره شد ('+new Date().toLocaleTimeString('fa-IR')+')');
+  }
+  function handleSaveKeys(){ setKeys(keyDraft); saveKeys(keyDraft); flash('🔑 کلیدها ذخیره شد'); }
+  function toggleSound(){ const nv=!soundOn; setSoundOn(nv); persistSettings({soundOn:nv}); }
+  function toggleBacktest(){ const nv=!backtestOn; setBacktestOn(nv); persistSettings({backtestOn:nv}); }
+  function togglePaper(){ const nv=!paperOn; setPaperOn(nv); persistSettings({paperOn:nv}); }
+  function toggleRiskMode(){ const nv=!riskModeOn; setRiskModeOn(nv); persistSettings({riskModeOn:nv}); flash(nv?'🌗 ریسک بازار: روشن':'🌗 ریسک بازار: خاموش (دستی)'); }
+  function toggleWatchToken(key){
+    setWatch(function(w){
+      const has=w.tokens.indexOf(key)>-1;
+      const nw={tokens: has? w.tokens.filter(function(k){return k!==key;}) : w.tokens.concat([key]), wallets:w.wallets};
+      saveWatch(nw); return nw;
+    });
+  }
+  function toggleWatchWallet(addr){
+    setWatch(function(w){
+      const has=w.wallets.indexOf(addr)>-1;
+      const nw={tokens:w.tokens, wallets: has? w.wallets.filter(function(a){return a!==addr;}) : w.wallets.concat([addr])};
+      saveWatch(nw); return nw;
+    });
+  }
+  function forceRecheck(key){ forceRecheckRef.current[key]=1; setSecBump(function(b){return b+1;}); flash('🔄 چک مجدد امنیت...'); }
+
+  function exportBackup(){
+    const data={
+      version:1,
+      exportedAt:Date.now(),
+      tracked:Array.from(trackedRef.current.entries()),
+      history:historyRef.current,
+      security:securityCacheRef.current,
+      pro:proCacheRef.current,
+      wallets:walletsRef.current,
+      watch:watch,
+      alerted:alertedRef.current,
+      bt:{bt:btRef.current,cat:btCatRef.current},
+      settings:{soundOn:soundOn,backtestOn:backtestOn,paperOn:paperOn,riskModeOn:riskModeOn}
+    };
+    if(includeKeys){ data.keys=keys; }
+    try{
+      const blob=new Blob([JSON.stringify(data)],{type:'application/json'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      const d=new Date();
+      a.href=url;
+      a.download='radar-backup-'+d.getFullYear()+(d.getMonth()+1)+d.getDate()+'-'+d.getHours()+d.getMinutes()+'.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      flash('💾 فایل پشتیبان دانلود شد');
+    }catch(e){ flash('⚠️ خطا در ساخت فایل'); }
+  }
+  function onImportFile(e){
+    const f=e.target.files&&e.target.files[0];
+    if(!f)return;
+    const reader=new FileReader();
+    reader.onload=function(){
+      try{
+        const data=JSON.parse(reader.result);
+        if(data.tracked) trackedRef.current=new Map(data.tracked);
+        if(data.history) historyRef.current=data.history;
+        if(data.security) securityCacheRef.current=data.security;
+        if(data.pro) proCacheRef.current=data.pro;
+        if(data.wallets) walletsRef.current=data.wallets;
+        if(data.alerted) alertedRef.current=data.alerted;
+        if(data.watch) setWatch(data.watch);
+        if(data.bt){ btRef.current=data.bt.bt||{}; btCatRef.current=data.bt.cat||{}; setBtCatStats(Object.assign({},btCatRef.current)); }
+        if(data.keys){ setKeys(data.keys); setKeyDraft(data.keys); saveKeys(data.keys); }
+        saveSecurityCache(securityCacheRef.current);
+        saveProCache(proCacheRef.current);
+        saveWallets(walletsRef.current);
+        saveAlerted(alertedRef.current);
+        saveBt({bt:btRef.current,cat:btCatRef.current});
+        if(data.watch) saveWatch(data.watch);
+        setSecurityData(Object.assign({},securityCacheRef.current));
+        setProData(Object.assign({},proCacheRef.current));
+        setWallets(Object.assign({},walletsRef.current));
+        flash('📥 بازیابی از فایل انجام شد');
+      }catch(err){ flash('⚠️ فایل پشتیبان نامعتبر است'); }
+    };
+    reader.readAsText(f);
+    e.target.value='';
+  }
+
+  useEffect(function(){
+    let alive=true;
+    function connect(){
+      try{
+        const ws=new WebSocket('wss://stream.binance.com:9443/ws/!ticker@arr');
+        wsRef.current=ws;
+        ws.onopen=function(){ if(alive)wsOkRef.current=true; };
+        ws.onerror=function(){ wsOkRef.current=false; };
+        ws.onclose=function(){ wsOkRef.current=false; if(alive)setTimeout(connect,5000); };
+        ws.onmessage=function(e){
+          try{ const arr=JSON.parse(e.data);
+            arr.forEach(function(t){ if(t.s&&t.s.indexOf('USDT')===t.s.length-4) liveRef.current.set(t.s,{price:+t.c,chg:+t.P}); });
+          }catch(err){}
+        };
+      }catch(err){}
+    }
+    connect();
+    const t=setInterval(function(){
+      const arr=[];
+      liveRef.current.forEach(function(v,id){ arr.push({id:id,price:v.price,chg:v.chg}); });
+      arr.sort(function(a,b){return b.chg-a.chg;});
+      setLive(arr.slice(0,10));
+      setSourceStats(function(s){ const o={}; for(const k in s)o[k]=s[k]; o.binance={ok:wsOkRef.current,count:liveRef.current.size,time:new Date().toLocaleTimeString('fa-IR'),error:wsOkRef.current?null:'WebSocket قطع'}; return o; });
+    },5000);
+    return function(){ alive=false; try{ if(wsRef.current)wsRef.current.close(); }catch(e){} clearInterval(t); };
+  },[]);
+
+  async function updateData(){
+    setStatus(function(s){ return {connected:s.connected,loading:true,error:s.error}; });
+    const now=Date.now();
+    try{
+      const res=await Promise.allSettled([
+        fetchDexScreener(), fetchGeckoTerminal(), fetchBybit(), fetchOKX(), fetchGate()
+      ]);
+      const ds=res[0],gt=res[1],bb=res[2],ox=res[3],ga=res[4];
+      function stat(ok,count,err){ return {ok:ok,count:count||0,time:new Date().toLocaleTimeString('fa-IR'),error:err||null}; }
+      setSourceStats(function(s){ const o={}; for(const k in s)o[k]=s[k];
+        o.dexscreener=ds.status==='fulfilled'?stat(true,ds.value.length):stat(false,0,String(ds.reason));
+        o.gecko=gt.status==='fulfilled'?stat(true,gt.value.length):stat(false,0,String(gt.reason));
+        o.bybit=bb.status==='fulfilled'?stat(true,bb.value.length):stat(false,0,String(bb.reason));
+        o.okx=ox.status==='fulfilled'?stat(true,ox.value.length):stat(false,0,String(ox.reason));
+        o.gate=ga.status==='fulfilled'?stat(true,ga.value.length):stat(false,0,String(ga.reason));
+        return o; });
+      const s={};
+      s.dexscreener=ds.status==='fulfilled'; s.gecko=gt.status==='fulfilled';
+      s.bybit=bb.status==='fulfilled'; s.okx=ox.status==='fulfilled'; s.gate=ga.status==='fulfilled';
+      s.binance=true;
+      setSrc(s);
+      let pool=[];
+      if(ds.status==='fulfilled')pool=pool.concat(ds.value);
+      if(gt.status==='fulfilled')pool=pool.concat(gt.value);
+      if(bb.status==='fulfilled')pool=pool.concat(bb.value);
+      if(ox.status==='fulfilled')pool=pool.concat(ox.value);
+      if(ga.status==='fulfilled')pool=pool.concat(ga.value);
+      if(pool.length===0){ setStatus({connected:false,loading:false,error:'هیچ منبعی در دسترس نیست'}); return; }
+      pool.forEach(function(it){
+        const oldHist=historyRef.current[it.key]||[];
+        const newHist=oldHist.slice(-29).concat([{price:it.price,time:now}]);
+        historyRef.current[it.key]=newHist;
+        if(!it.chg5 && newHist.length>2){
+          const back=Math.min(newHist.length-1,15);
+          const oldP=newHist[newHist.length-1-back].price;
+          if(oldP>0) it.chg5=+(((it.price-oldP)/oldP)*100).toFixed(2);
+        }
+        const an=analyzeItem(it,newHist);
+        it.score=an.score; it.signals=an.signals;
+        let e=trackedRef.current.get(it.key);
+        if(!e){ e={catFirstSeen:{},catLastActive:{},lastSignals:[],firstSeen:now,lastSeen:now}; trackedRef.current.set(it.key,e); }
+        e.lastSeen=now;
+        const cats=categorize(it);
+        cats.forEach(function(cat){ const la=e.catLastActive[cat]; if(!la||(now-la)>CONFIG.KEEP_SIGNAL_MS)e.catFirstSeen[cat]=now; e.catLastActive[cat]=now; });
+        if(it.signals.length>0)e.lastSignals=it.signals;
+        e.lastItem=it;
+        it.firstSeen=e.firstSeen; it.catFirstSeen=e.catFirstSeen;
+      });
+      trackedRef.current.forEach(function(e,k){
+        const any=Object.values(e.catLastActive).some(function(t){return (now-t)<=CONFIG.KEEP_SIGNAL_MS;});
+        const seenRecent=(e.lastSeen||0)&&(now-e.lastSeen)<=CONFIG.KEEP_SIGNAL_MS;
+        if(!any && !seenRecent)trackedRef.current.delete(k);
+      });
+      pool.sort(function(a,b){return (b.firstSeen||0)-(a.firstSeen||0);});
+      pool=pool.slice(0,CONFIG.MAX_TRACKED);
+      itemsRef.current=pool;
+      setItems(pool);
+      setLastUpdate(new Date());
+      setStatus({connected:true,loading:false,error:null});
+    }catch(err){
+      setStatus({connected:false,loading:false,error:String(err)});
+    }
+  }
+
+  useEffect(function(){
+    if(items.length===0)return;
+    let cancelled=false;
+    const now=Date.now();
+    const evmBatches={}; const solTokens=[];
+    items.forEach(function(it){
+      if(!it.contractAddress||it.kind!=='birth')return;
+      const forced=!!forceRecheckRef.current[it.key];
+      const cached=securityCacheRef.current[it.key];
+      if(!forced && cached&&cached.checked&&(now-cached.ts)<CONFIG.SECURITY_TTL_MS)return;
+      const ck=String(it.chain||'').toLowerCase();
+      if(ck.indexOf('sol')>-1){solTokens.push(it);}
+      else{ const gid=CHAIN_TO_GORPLUS_ID[ck]; if(gid){ if(!evmBatches[gid])evmBatches[gid]=[]; evmBatches[gid].push(it); } }
+    });
+    async function run(){
+      for(const gid in evmBatches){
+        if(cancelled)return;
+        const list=evmBatches[gid];
+        for(let i=0;i<list.length;i+=CONFIG.SECURITY_BATCH_SIZE){
+          if(cancelled)return;
+          const batch=list.slice(i,i+CONFIG.SECURITY_BATCH_SIZE);
+          const addrs=batch.map(function(t){return t.contractAddress;});
+          try{
+            const result=await fetchGoPlus(gid,addrs);
+            const updated={};
+            batch.forEach(function(t){
+              const lc=t.contractAddress.toLowerCase();
+              const data=result[lc];
+              if(data){ const an=analyzeGoPlus(lc,data); securityCacheRef.current[t.key]=an; updated[t.key]=an; }
+            });
+            setSecurityData(function(prev){ return Object.assign({},prev,updated); });
+          }catch(e){}
+          if(i+CONFIG.SECURITY_BATCH_SIZE<list.length){ await new Promise(function(r){setTimeout(r,CONFIG.SECURITY_BATCH_DELAY);}); }
+        }
+      }
+      for(let i=0;i<solTokens.length;i++){
+        if(cancelled)return;
+        const t=solTokens[i];
+        try{
+          const data=await fetchRugCheck(t.contractAddress);
+          const an=analyzeRugCheck(data);
+          securityCacheRef.current[t.key]=an;
+          setSecurityData(function(prev){ const o={}; for(const k in prev)o[k]=prev[k]; o[t.key]=an; return o; });
+        }catch(e){}
+        if(i<solTokens.length-1){ await new Promise(function(r){setTimeout(r,400);}); }
+      }
+      if(!cancelled){ saveSecurityCache(securityCacheRef.current); forceRecheckRef.current={}; }
+    }
+    run();
+    return function(){ cancelled=true; };
+  },[items,secBump]);
+
+  useEffect(function(){
+    if(items.length===0)return;
+    const now=Date.now();
+    const cands=items.filter(function(it){
+      if(!it.contractAddress||it.kind!=='birth')return false;
+      const ck=String(it.chain||'').toLowerCase();
+      if(!EVM_SELL[ck])return false;
+      const c=proCacheRef.current[it.key];
+      return !(c&&c.evmTs&&(now-c.evmTs)<CONFIG.PRO_TTL_MS);
+    }).slice(0,4);
+    if(cands.length===0)return;
+    let cancelled=false;
+    async function run(){
+      for(let i=0;i<cands.length;i++){
+        if(cancelled)return;
+        const t=cands[i];
+        const cfg=EVM_SELL[String(t.chain).toLowerCase()];
+        try{
+          const ok=await evmSellTest(cfg,t.contractAddress);
+          const cur=proCacheRef.current[t.key]||{ts:now};
+          cur.evmSellable=ok; cur.evmTs=now;
+          proCacheRef.current[t.key]=cur;
+          setProData(function(prev){ const o={}; for(const k in prev)o[k]=prev[k]; o[t.key]=cur; return o; });
+        }catch(e){}
+        if(i<cands.length-1) await new Promise(function(r){setTimeout(r,600);});
+      }
+      if(!cancelled)saveProCache(proCacheRef.current);
+    }
+    run();
+    return function(){cancelled=true;};
+  },[items]);
+
+  useEffect(function(){
+    if(items.length===0)return;
+    const hasJup=!!keys.jupiter, hasHel=!!keys.helius;
+    if(!hasJup&&!hasHel)return;
+    let cancelled=false;
+    const now=Date.now();
+    const solBirths=items.filter(function(it){
+      if(!it.contractAddress||it.kind!=='birth')return false;
+      if(String(it.chain||'').toLowerCase().indexOf('sol')<0)return false;
+      const c=proCacheRef.current[it.key];
+      return !(c&&c.ts&&(now-c.ts)<CONFIG.PRO_TTL_MS);
+    }).slice(0,CONFIG.PRO_MAX_CHECKS);
+    if(solBirths.length===0)return;
+    async function run(){
+      if(hasJup){
+        try{
+          const ids=solBirths.map(function(t){return t.contractAddress;});
+          const prices=await jupPrice(ids,keys.jupiter);
+          const updated={};
+          solBirths.forEach(function(t){
+            const p=prices[t.contractAddress];
+            if(p&&p.price){
+              const cur=proCacheRef.current[t.key]||{ts:now};
+              cur.price=+p.price;
+              proCacheRef.current[t.key]=cur;
+              updated[t.key]=cur;
+            }
+          });
+          setProData(function(prev){ return Object.assign({},prev,updated); });
+        }catch(e){}
+      }
+      for(let i=0;i<solBirths.length;i++){
+        if(cancelled)return;
+        const t=solBirths[i];
+        const cur=proCacheRef.current[t.key]||{ts:now};
+        if(hasJup&&cur.sellable===undefined){
+          try{ const st=await jupSellTest(t.contractAddress,keys.jupiter); cur.sellable=st.sellable; }catch(e){}
+        }
+        if(hasHel&&cur.concentration===undefined){
+          try{ const hc=await heliusHolders(t.contractAddress,keys.helius); cur.concentration=hc.concentration; }catch(e){}
+        }
+        proCacheRef.current[t.key]=cur;
+        setProData(function(prev){ const o={}; for(const k in prev)o[k]=prev[k]; o[t.key]=cur; return o; });
+        if(i<solBirths.length-1){ await new Promise(function(r){setTimeout(r,500);}); }
+      }
+      if(!cancelled)saveProCache(proCacheRef.current);
+    }
+    run();
+    return function(){ cancelled=true; };
+  },[items,keys]);
+
+  useEffect(function(){
+    if(items.length===0 || !keys.helius)return;
+    const now=Date.now();
+    if(walletLastRunRef.current && (now-walletLastRunRef.current)<CONFIG.WALLET_TTL_MS)return;
+    let cancelled=false;
+    const strongSol=items.filter(function(it){
+      return it.kind==='birth' && it.contractAddress &&
+        String(it.chain||'').toLowerCase().indexOf('sol')>-1 &&
+        ((it.score||0)>=40 || (it.chg1||0)>=10);
+    }).sort(function(a,b){return (b.score||0)-(a.score||0);}).slice(0,CONFIG.WALLET_MAX_TOKENS);
+    if(strongSol.length===0)return;
+    function updateWalletFromToken(mint, holders, tokenIsWinner){
+      holders.forEach(function(h){
+        const addr=h.owner;
+        if(!addr)return;
+        let w=walletsRef.current[addr];
+        if(!w){ w={address:addr,score:0,wins:0,appearances:0,tokens:{},firstSeen:now,lastSeen:now,tier:3}; walletsRef.current[addr]=w; }
+        w.appearances++;
+        w.lastSeen=now;
+        w.tokens[mint]={amount:h.amount,ts:now};
+        if(tokenIsWinner){ w.wins++; w.score+=10; }
+        const ks=Object.keys(w.tokens);
+        if(ks.length>20){ delete w.tokens[ks[0]]; }
+      });
+    }
+    function recomputeTiers(){
+      const list=Object.values(walletsRef.current).sort(function(a,b){return b.score-a.score;});
+      list.forEach(function(w,i){ if(i<50)w.tier=1; else if(i<200)w.tier=2; else w.tier=3; });
+    }
+    async function run(){
+      walletLastRunRef.current=now;
+      for(let i=0;i<strongSol.length;i++){
+        if(cancelled)return;
+        const t=strongSol[i];
+        const tokenIsWinner=(t.chg1||0)>=15 || (t.score||0)>=60;
+        try{
+          const holders=await discoverTokenHolders(t.contractAddress, keys.helius);
+          updateWalletFromToken(t.contractAddress, holders, tokenIsWinner);
+        }catch(e){}
+        if(i<strongSol.length-1){ await new Promise(function(r){setTimeout(r,600);}); }
+      }
+      if(!cancelled){
+        recomputeTiers();
+        setWallets(Object.assign({},walletsRef.current));
+        saveWallets(walletsRef.current);
+      }
+    }
+    run();
+    return function(){ cancelled=true; };
+  },[items,keys]);
+
+  const pods = useMemo(function(){
+    const addrs=Object.keys(wallets);
+    const tokenHolders={};
+    addrs.forEach(function(a){
+      Object.keys(wallets[a].tokens||{}).forEach(function(m){
+        if(!tokenHolders[m])tokenHolders[m]=[];
+        tokenHolders[m].push(a);
+      });
+    });
+    const pairCount={};
+    Object.keys(tokenHolders).forEach(function(m){
+      const hs=tokenHolders[m];
+      for(let i=0;i<hs.length;i++){
+        for(let j=i+1;j<hs.length;j++){
+          const key=[hs[i],hs[j]].sort().join('|');
+          pairCount[key]=(pairCount[key]||0)+1;
+        }
+      }
+    });
+    const parent={};
+    function find(x){ if(!parent[x])parent[x]=x; if(parent[x]!==x)parent[x]=find(parent[x]); return parent[x]; }
+    function uni(a,b){ parent[find(a)]=find(b); }
+    Object.keys(pairCount).forEach(function(k){
+      if(pairCount[k]>=CONFIG.POD_SHARED_MIN){ const parts=k.split('|'); uni(parts[0],parts[1]); }
+    });
+    const groups={};
+    Object.keys(parent).forEach(function(a){
+      const r=find(a);
+      if(!groups[r])groups[r]=[];
+      groups[r].push(a);
+    });
+    const podsList=[];
+    Object.keys(groups).forEach(function(r){
+      const members=groups[r];
+      if(members.length>=2){
+        const shared={};
+        members.forEach(function(a){ Object.keys(wallets[a].tokens||{}).forEach(function(m){ shared[m]=(shared[m]||0)+1; }); });
+        const sharedTokens=Object.keys(shared).filter(function(m){return shared[m]>=members.length;});
+        const avgScore=members.reduce(function(s,a){return s+(wallets[a].score||0);},0)/members.length;
+        podsList.push({id:r,members:members,sharedTokens:sharedTokens,avgScore:avgScore,label: avgScore>=30?'smart':'insider'});
+      }
+    });
+    return podsList.sort(function(a,b){return b.members.length-a.members.length;});
+  },[wallets]);
+
+  const confluence = useMemo(function(){
+    const tokenWallets={};
+    Object.keys(wallets).forEach(function(addr){
+      const w=wallets[addr];
+      Object.keys(w.tokens||{}).forEach(function(mint){
+        if(!tokenWallets[mint])tokenWallets[mint]=[];
+        tokenWallets[mint].push(addr);
+      });
+    });
+    const confl=[];
+    Object.keys(tokenWallets).forEach(function(mint){
+      if(tokenWallets[mint].length>=CONFIG.CONFLUENCE_THRESHOLD){
+        const item=items.find(function(i){return i.contractAddress===mint;});
+        confl.push({mint:mint,count:tokenWallets[mint].length,symbol:item?item.symbol:shortAddr(mint),item:item,price:item?item.price:0,chg1:item?(item.chg1||0):0});
+      }
+    });
+    return confl.sort(function(a,b){return b.count-a.count;});
+  },[wallets,items]);
+
+  const confluenceByMint = useMemo(function(){
+    const m={};
+    confluence.forEach(function(c){ m[c.mint]=c.count; });
+    return m;
+  },[confluence]);
+
+  const topWallets = useMemo(function(){
+    return Object.values(wallets).sort(function(a,b){return b.score-a.score;}).slice(0,CONFIG.MAX_PER_TAB);
+  },[wallets]);
+
+  const walletSearchResult = useMemo(function(){
+    const q=walletSearch.trim();
+    if(!q)return null;
+    return wallets[q]||null;
+  },[walletSearch,wallets]);
+
+  const riskVal = useMemo(function(){ return computeRiskMode(global, chains); },[global,chains]);
+  const riskInfo = riskModeOn? riskModeLabel(riskVal) : {label:'🌗 غیرفعال (دستی)',color:'#6b7280'};
+  const riskOff = riskModeOn && riskVal<40;
+  const effAlertThreshold = riskOff? CONFIG.ALERT_SCORE_THRESHOLD+10 : CONFIG.ALERT_SCORE_THRESHOLD;
+
+  const listingCandidates = useMemo(function(){
+    const binanceSet={};
+    liveRef.current.forEach(function(v,id){ binanceSet[id.replace('USDT','')]=1; });
+    const seen={};
+    const cand=[];
+    items.forEach(function(it){
+      if(it.kind!=='cex')return;
+      if(binanceSet[it.symbol])return;
+      if(seen[it.symbol])return;
+      seen[it.symbol]=1;
+      cand.push({symbol:it.symbol,source:it.dex,vol:(it.vol1||0)*12,price:it.price,chg1:it.chg1||0});
+    });
+    return cand.sort(function(a,b){return b.vol-a.vol;}).slice(0,10);
+  },[items,live]);
+
+  const inflows = useMemo(function(){
+    return chains.filter(function(c){return (c.chg||0)>0;}).sort(function(a,b){return b.chg-a.chg;}).slice(0,5);
+  },[chains]);
+
+  useEffect(function(){
+    if(items.length===0)return;
+    const now=Date.now();
+    const itemByKey={};
+    items.forEach(function(i){ itemByKey[i.key]=i; });
+    if(backtestOn){
+      items.forEach(function(it){
+        if((it.score||0)>=50 && !btRef.current[it.key]){
+          btRef.current[it.key]={key:it.key,symbol:it.symbol,entry:it.price,t0:now,done:false,results:{},cats:Array.from(categorize(it))};
+        }
+      });
+      Object.keys(btRef.current).forEach(function(k){
+        const b=btRef.current[k];
+        if(b.done)return;
+        const cur=itemByKey[k];
+        const price=cur?cur.price:b.entry;
+        [5,15,60].forEach(function(h){
+          const el=(now-b.t0)/60000;
+          if(el>=h && b.results[h]===undefined){
+            b.results[h]= price> b.entry*(1+CONFIG.BT_WIN_PCT);
+          }
+        });
+        if((now-b.t0)/60000>=60 && !b.done){
+          b.done=true;
+          const win=b.results[60]===true;
+          (b.cats||[]).forEach(function(c){
+            if(!btCatRef.current[c]) btCatRef.current[c]={total:0,wins:0};
+            btCatRef.current[c].total++;
+            if(win) btCatRef.current[c].wins++;
+          });
+        }
+      });
+      const ks=Object.keys(btRef.current);
+      if(ks.length>200){ delete btRef.current[ks[0]]; }
+      const doneList=ks.filter(function(k){return btRef.current[k].done;});
+      const wins=doneList.filter(function(k){return btRef.current[k].results[60]===true;}).length;
+      setBtStats({total:doneList.length,wins:wins,open:ks.length-doneList.length});
+      setBtCatStats(Object.assign({},btCatRef.current));
+      saveBt({bt:btRef.current,cat:btCatRef.current});
+    }
+    if(paperOn){
+      const P=paperRef.current;
+      items.forEach(function(it){
+        const sec=securityData[it.key];
+        const pro=proData[it.key];
+        const verified=(sec&&sec.checked)||(pro&&pro.sellable===true);
+        let ee=null;
+        for(let i=0;i<earlyRef.current.length;i++){ if(earlyRef.current[i].key===it.key){ ee=earlyRef.current[i]; break; } }
+        if(verified && ee && ee.earlyEntry && ee.earlyEntry.score>=effAlertThreshold && !P.positions[it.key] && P.cash>100){
+          const size=P.cash*CONFIG.PAPER_RISK_PCT;
+          const qty=size/it.price;
+          P.positions[it.key]={symbol:it.symbol,entry:it.price,qty:qty,size:size,opened:now};
+        }
+      });
+      let openVal=0; let openCount=0;
+      Object.keys(P.positions).forEach(function(k){
+        const pos=P.positions[k];
+        const cur=itemByKey[k];
+        const price=cur?cur.price:pos.entry;
+        const val=pos.qty*price;
+        const el=(now-pos.opened)/60000;
+        if(price<=pos.entry*0.85 || price>=pos.entry*1.5 || el>60){
+          P.cash+=val;
+          P.realized+=(val-pos.size);
+          delete P.positions[k];
+        } else {
+          openVal+=val; openCount++;
+        }
+      });
+      setPaperStats({equity:P.cash+openVal,open:openCount,realized:P.realized});
+    }
+  },[items,securityData,proData,backtestOn,paperOn,effAlertThreshold]);
+
+  useEffect(function(){
+    const early=earlyRef.current||[];
+    if(early.length===0)return;
+    const now=Date.now();
+    const alertable=early.filter(function(it){
+      const sec=securityData[it.key];
+      const pro=proData[it.key];
+      const verified=(sec&&sec.checked)||(pro&&pro.sellable===true);
+      const lastAlert=alertedRef.current[it.key];
+      const notRecent=!lastAlert||(now-lastAlert)>CONFIG.ALERT_RECHECK_MS;
+      return verified && it.earlyEntry.score>=effAlertThreshold && notRecent;
+    });
+    if(alertable.length===0)return;
+    alertable.forEach(function(it){ alertedRef.current[it.key]=now; });
+    saveAlerted(alertedRef.current);
+    const latest=alertable[0];
+    setAlertBanner({symbol:latest.symbol,score:latest.earlyEntry.score,chain:latest.chain,ts:now});
+    setAlertHistory(function(prev){
+      const arr=alertable.map(function(it){ return {symbol:it.symbol,score:it.earlyEntry.score,chain:it.chain,ts:now}; });
+      return arr.concat(prev).slice(0,20);
+    });
+    if(soundOn){ playAlertSound(); }
+    if(navigator.vibrate){ try{ navigator.vibrate([200,100,200]); }catch(e){} }
+    setTimeout(function(){ setAlertBanner(null); },8000);
+  },[items,securityData,proData,soundOn,effAlertThreshold]);
+
+  useEffect(function(){ updateData(); const iv=setInterval(updateData,CONFIG.POLL_INTERVAL*1000); return function(){clearInterval(iv);}; },[]);
+  useEffect(function(){ const t=setInterval(function(){ setCountdown(function(c){return c<=1?CONFIG.POLL_INTERVAL:c-1;}); },1000); return function(){clearInterval(t);}; },[]);
+  useEffect(function(){
+    function run(){ fetchGlobal()
+      .then(function(g){ setGlobal(g); setSourceStats(function(s){ const o={}; for(const k in s)o[k]=s[k]; o.coingecko={ok:true,count:1,time:new Date().toLocaleTimeString('fa-IR'),error:null}; return o; }); })
+      .catch(function(e){ setSourceStats(function(s){ const o={}; for(const k in s)o[k]=s[k]; o.coingecko={ok:false,count:0,time:new Date().toLocaleTimeString('fa-IR'),error:String(e)}; return o; }); }); }
+    run(); const iv=setInterval(run,CONFIG.GLOBAL_INTERVAL*1000); return function(){clearInterval(iv);};
+  },[]);
+  useEffect(function(){
+    function run(){ fetchLlama()
+      .then(function(c){ setChains(c); setSourceStats(function(s){ const o={}; for(const k in s)o[k]=s[k]; o.llama={ok:true,count:c.length,time:new Date().toLocaleTimeString('fa-IR'),error:null}; return o; }); })
+      .catch(function(e){ setSourceStats(function(s){ const o={}; for(const k in s)o[k]=s[k]; o.llama={ok:false,count:0,time:new Date().toLocaleTimeString('fa-IR'),error:String(e)}; return o; }); }); }
+    run(); const iv=setInterval(run,60000); return function(){clearInterval(iv);};
+  },[]);
+
+  function clearLS(){
+    try{localStorage.removeItem(LS_KEY);}catch(e){}
+    try{localStorage.removeItem(SECURITY_CACHE_KEY);}catch(e){}
+    try{localStorage.removeItem(PRO_CACHE_KEY);}catch(e){}
+    try{localStorage.removeItem(ALERTED_KEY);}catch(e){}
+    try{localStorage.removeItem(WALLETS_KEY);}catch(e){}
+    try{localStorage.removeItem(WATCH_KEY);}catch(e){}
+    try{localStorage.removeItem(BT_KEY);}catch(e){}
+    trackedRef.current=new Map(); historyRef.current={}; securityCacheRef.current={}; proCacheRef.current={}; alertedRef.current={}; walletsRef.current={}; btRef.current={}; btCatRef.current={}; paperRef.current={cash:CONFIG.PAPER_CAPITAL,positions:{},realized:0};
+    setItems([]); setSecurityData({}); setProData({}); setAlertHistory([]); setWallets({}); setWatch({tokens:[],wallets:[]}); setBtCatStats({}); setBtStats({total:0,wins:0,open:0});
+    flash('🗑 حافظه پاک شد');
+  }
+
+  function openItem(it){
+    if(!it.url)return;
+    const desktop=window.matchMedia&&window.matchMedia('(min-width: 900px)').matches;
+    if(desktop){ window.open(it.url,'_blank'); } else { window.location.href=it.url; }
+  }
+
+  const now=Date.now();
+  const tracked=trackedRef.current;
+  function inTab(it,cat){ const e=tracked.get(it.key); if(!e)return false; const la=e.catLastActive[cat]; return la!==undefined&&(now-la)<=CONFIG.KEEP_SIGNAL_MS; }
+
+  const itemByKey=new Map(items.map(function(i){return [i.key,i];}));
+  const persisted=[];
+  tracked.forEach(function(e,key){
+    const lastSeen=e.lastSeen||0;
+    const anyCat=Object.values(e.catLastActive||{}).some(function(t){return (now-t)<=CONFIG.KEEP_SIGNAL_MS;});
+    if(((now-lastSeen)<=CONFIG.KEEP_SIGNAL_MS) || anyCat){
+      const base=itemByKey.get(key)||e.lastItem;
+      if(base){ const cp=Object.assign({},base); cp._tr=e; persisted.push(cp); }
+    }
+  });
+  const basePool= sourceFilter==='all' ? persisted : persisted.filter(function(i){return i.source===sourceFilter;});
+
+  let filtered=basePool;
+  if(activeTab==='top')filtered=basePool.filter(function(i){return inTab(i,'top');}).sort(function(a,b){return (b.catFirstSeen.top||0)-(a.catFirstSeen.top||0);});
+  else if(activeTab==='signals')filtered=basePool.filter(function(i){return inTab(i,'signals');}).sort(function(a,b){return (b.catFirstSeen.signals||0)-(a.catFirstSeen.signals||0);});
+  else if(activeTab==='accumulation')filtered=basePool.filter(function(i){return inTab(i,'accumulation');}).sort(function(a,b){return (b.catFirstSeen.accumulation||0)-(a.catFirstSeen.accumulation||0);});
+  else if(activeTab==='breakout')filtered=basePool.filter(function(i){return inTab(i,'breakout');}).sort(function(a,b){return (b.catFirstSeen.breakout||0)-(a.catFirstSeen.breakout||0);});
+  else if(activeTab==='volume')filtered=basePool.filter(function(i){return inTab(i,'volume');}).sort(function(a,b){return (b.catFirstSeen.volume||0)-(a.catFirstSeen.volume||0);});
+  else if(activeTab==='births')filtered=basePool.filter(function(i){return i.kind==='birth';}).sort(function(a,b){return (b.firstSeen||0)-(a.firstSeen||0);});
+  else if(activeTab==='cex')filtered=basePool.filter(function(i){return i.kind==='cex';}).sort(function(a,b){return b.score-a.score;});
+  else if(activeTab==='all')filtered=basePool.slice().sort(function(a,b){return (b.firstSeen||0)-(a.firstSeen||0);});
+
+  if(search)filtered=filtered.filter(function(i){return i.symbol.toLowerCase().indexOf(search.toLowerCase())>-1;});
+
+  const earlyCandidates=basePool.filter(function(it){return it.kind==='birth'&&it.contractAddress;})
+    .map(function(it){ const sec=securityData[it.key]; const pro=proData[it.key]; const ee=calcEarlyEntryScore(it,sec,pro); return Object.assign({},it,{earlyEntry:ee}); })
+    .filter(function(it){return !it.earlyEntry.blocked&&it.earlyEntry.score>0;})
+    .sort(function(a,b){return b.earlyEntry.score-a.earlyEntry.score;});
+  earlyRef.current=earlyCandidates;
+  const earlyMap={};
+  earlyCandidates.forEach(function(it){ earlyMap[it.key]=it.earlyEntry; });
+
+  const isAll=activeTab==='all';
+  const isDebug=activeTab==='debug';
+  const isEarly=activeTab==='early';
+  const isSmart=activeTab==='smart';
+  const isWallets=activeTab==='wallets';
+  const isWhales=activeTab==='whales';
+  const isAssist=activeTab==='assist';
+  const limit=isAll?displayCount:CONFIG.MAX_PER_TAB;
+  const displayed= isEarly ? earlyCandidates.slice(0,limit) : filtered.slice(0,limit);
+
+  function cap(n){ return Math.min(n,CONFIG.MAX_PER_TAB); }
+  const walletCount=Object.keys(wallets).length;
+  const counts={
+    early:cap(earlyCandidates.length),
+    assist:cap(listingCandidates.length),
+    smart:cap(confluence.length),
+    whales:cap(pods.length),
+    wallets:cap(walletCount),
+    top:cap(basePool.filter(function(i){return inTab(i,'top');}).length),
+    signals:cap(basePool.filter(function(i){return inTab(i,'signals');}).length),
+    accumulation:cap(basePool.filter(function(i){return inTab(i,'accumulation');}).length),
+    breakout:cap(basePool.filter(function(i){return inTab(i,'breakout');}).length),
+    volume:cap(basePool.filter(function(i){return inTab(i,'volume');}).length),
+    births:cap(basePool.filter(function(i){return i.kind==='birth';}).length),
+    cex:cap(basePool.filter(function(i){return i.kind==='cex';}).length),
+    all:basePool.length
+  };
+  const connectedCount=['dexscreener','gecko','bybit','okx','gate','coingecko'].filter(function(k){return src[k];}).length+(wsOkRef.current?1:0);
+
+  const tabs=[
+    {id:'early',label:'🚀 ورود زودهنگام',count:counts.early},
+    {id:'assist',label:'📊 دستیار',count:counts.assist},
+    {id:'smart',label:'🐋 پول هوشمند',count:counts.smart},
+    {id:'whales',label:'🕸️ شبکه نهنگ‌ها',count:counts.whales},
+    {id:'wallets',label:'👛 هوش کیف‌پول',count:counts.wallets},
+    {id:'top',label:'👑 برترین',count:counts.top},
+    {id:'signals',label:'🔥 سیگنال قوی',count:counts.signals},
+    {id:'accumulation',label:'🐋 انباشت',count:counts.accumulation},
+    {id:'breakout',label:'💥 شکست',count:counts.breakout},
+    {id:'volume',label:'📊 حجم',count:counts.volume},
+    {id:'births',label:'🍼 تولدهای DEX',count:counts.births},
+    {id:'cex',label:'🎯 حرکات CEX',count:counts.cex},
+    {id:'all',label:'📋 همه',count:counts.all},
+    {id:'debug',label:'⚙️ Debug',count:connectedCount}
+  ];
+  const srcList=[['dexscreener','📡 DEXScreener'],['gecko','🦎 GeckoTerminal'],['bybit','🟡 Bybit'],['okx','⚪ OKX'],['gate','🟠 Gate.io'],['coingecko','📊 CoinGecko'],['llama','💰 DeFiLlama'],['binance','⚡ Binance (زنده)']];
+
+  const secChecked=Object.keys(securityData).filter(function(k){return securityData[k]&&securityData[k].checked;}).length;
+  const secDangerous=Object.keys(securityData).filter(function(k){return securityData[k]&&securityData[k].dangerous;}).length;
+  const btWinRate= btStats.total>0? Math.round((btStats.wins/btStats.total)*100):0;
+  const yCount= earlyCandidates.filter(function(i){return i.earlyEntry.score>=CONFIG.ALERT_SCORE_THRESHOLD;}).length;
+  const xCount= earlyCandidates.filter(function(i){return i.earlyEntry.score>=effAlertThreshold;}).length;
+
+  return (
+    <div className="min-h-screen text-white pb-20" style={{direction:'rtl'}}>
+
+      {alertBanner && (
+        <div className="alert-banner" style={{position:'fixed',top:0,left:0,right:0,zIndex:50,padding:'12px',background:'linear-gradient(120deg,rgba(16,185,129,.95),rgba(34,211,238,.95))',color:'#05070f',textAlign:'center',fontWeight:'bold',fontFamily:'Tahoma',direction:'rtl',boxShadow:'0 4px 20px rgba(0,0,0,.4)'}}>
+          🚀 هشدار ورود زودهنگام: {alertBanner.symbol} ({alertBanner.chain}) — امتیاز {alertBanner.score}
+        </div>
+      )}
+
+      <div className="max-w-2xl mx-auto p-3 desktop-wide">
+
+        <div className="glass rounded-xl p-2 mb-2 flex items-center justify-between" style={{border:'1px solid '+riskInfo.color}}>
+          <span className="text-[11px] font-bold" style={{color:riskInfo.color}}>{riskInfo.label}</span>
+          <span className="text-[10px] tnum text-gray-400">ریسک بازار: {riskVal}/100</span>
+          {riskOff && <span className="text-[9px] px-1.5 py-0.5 rounded" style={{background:'rgba(239,68,68,.15)',color:'#fca5a5'}}>آستانه +۱۰</span>}
+        </div>
+
+        {global && (
+          <div className="glass rounded-xl p-3 mb-3 grid grid-cols-3 gap-2 text-center" style={{border:'1px solid rgba(251,191,36,.25)'}}>
+            <div><div className="text-[9px] text-gray-500">مارکت‌کپ</div><div className="text-sm font-bold tnum">${(global.total_market_cap.usd/1e12).toFixed(2)}T</div><div className="text-[10px]" style={{color:global.market_cap_change_percentage_24h_usd>=0?'#10b981':'#ef4444'}}>{global.market_cap_change_percentage_24h_usd.toFixed(2)}%</div></div>
+            <div><div className="text-[9px] text-gray-500">BTC Dom</div><div className="text-sm font-bold tnum">{global.market_cap_percentage.btc.toFixed(1)}%</div><div className="text-[10px] text-gray-400">ETH {global.market_cap_percentage.eth.toFixed(1)}%</div></div>
+            <div><div className="text-[9px] text-gray-500">حجم ۲۴س</div><div className="text-sm font-bold tnum">${(global.total_volume.usd/1e9).toFixed(1)}B</div><div className="text-[10px] text-gray-400">{global.active_cryptocurrencies} کوین</div></div>
+          </div>
+        )}
+
+        <div className="glass rounded-2xl p-4 mb-3" style={{border:'1px solid rgba(34,211,238,.25)'}}>
+          <div className="flex justify-between items-center mb-3">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl flex items-center justify-center text-2xl" style={{background:'linear-gradient(135deg,#22d3ee,#10b981)'}}>📡</div>
+              <div>
+                <h1 className="text-lg font-black gold-text">رادار چندمنبعی</h1>
+                <p className="text-xs text-gray-400 mt-0.5">{items.length} آیتم • 🐋{walletCount} کیف‌پول • 🚀{counts.early} زودهنگام</p>
+              </div>
+            </div>
+            <div className="text-left"><div className="text-2xl font-black tnum" style={{color:'#fbbf24'}}>{counts.early}</div><div className="text-[10px] text-gray-400">🚀 زودهنگام</div></div>
+          </div>
+          <div className="mt-2 text-center text-[10px] text-gray-500">فاز ۱ تا ۶ + ۵ اصلاح جزئی • ظرفیت {CONFIG.MAX_PER_TAB} • به‌روزرسانی: <span className="tnum font-bold text-amber-400">{countdown}</span>ث</div>
+          {status.error && <div className="mt-2 text-xs p-2 rounded-lg" style={{background:'rgba(239,68,68,.1)',color:'#fca5a5'}}>⚠️ {status.error}</div>}
+          {saveFlash && <div className="mt-2 text-xs p-2 rounded-lg save-flash" style={{background:'rgba(16,185,129,.2)',color:'#86efac',border:'1px solid rgba(16,185,129,.4)'}}>{saveMsg}</div>}
+        </div>
+
+        {!isSmart && !isWallets && !isWhales && !isAssist && (
+          <input type="text" value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="🔍 جستجو" className="w-full glass rounded-xl px-4 py-2.5 text-sm outline-none mb-3" style={{border:'1px solid rgba(255,255,255,.1)'}}/>
+        )}
+
+        <div className="flex gap-2 mb-3 overflow-x-auto scrollbar-hide pb-1">
+          {[['all','🌐 همه'],['dexscreener','📡 DEXScreener'],['geckoterminal','🦎 Gecko'],['bybit','🟡 Bybit'],['okx','⚪ OKX'],['gate','🟠 Gate']].map(function(f){
+            return <button key={f[0]} onClick={function(){setSourceFilter(f[0]);setDisplayCount(CONFIG.MAX_PER_TAB);}} className="px-3 py-1.5 rounded-lg text-[11px] font-semibold whitespace-nowrap"
+              style={{background:sourceFilter===f[0]?'rgba(34,211,238,.2)':'rgba(255,255,255,.03)',border:'1px solid '+(sourceFilter===f[0]?'rgba(34,211,238,.5)':'rgba(255,255,255,.08)'),color:sourceFilter===f[0]?'#a5f3fc':'#9ca3af'}}>
+              {f[1]}
+            </button>;
+          })}
+        </div>
+
+        <div className="flex gap-2 mb-3 overflow-x-auto scrollbar-hide pb-1">
+          {tabs.map(function(t){
+            return <button key={t.id} onClick={function(){setActiveTab(t.id);setDisplayCount(CONFIG.MAX_PER_TAB);}} className="px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap flex items-center gap-1.5"
+              style={{background:activeTab===t.id?'linear-gradient(120deg,rgba(251,191,36,.2),rgba(34,211,238,.15))':'rgba(255,255,255,.03)',border:'1px solid '+(activeTab===t.id?'rgba(251,191,36,.45)':'rgba(255,255,255,.08)'),color:activeTab===t.id?'#fde68a':'#9ca3af'}}>
+              {t.label}<span className="px-1.5 py-0.5 rounded-md text-[10px] tnum" style={{background:'rgba(0,0,0,.3)'}}>{t.count}</span>
+            </button>;
+          })}
+        </div>
+
+        {isDebug ? (
+          <div className="flex flex-col gap-2.5">
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(251,191,36,.4)'}}>
+              <div className="font-bold text-sm mb-2" style={{color:'#fde68a'}}>🌗 حالت ریسک بازار</div>
+              <button onClick={toggleRiskMode} className="w-full px-3 py-2 rounded-lg text-[11px] font-bold" style={{background:riskModeOn?'rgba(16,185,129,.15)':'rgba(107,114,128,.15)',border:'1px solid '+(riskModeOn?'rgba(16,185,129,.3)':'rgba(107,114,128,.3)'),color:riskModeOn?'#86efac':'#9ca3af'}}>
+                {riskModeOn?'🟢 ریسک بازار: روشن (خودکار)':'⚪ ریسک بازار: خاموش (دستی)'}
+              </button>
+              <div className="mt-2 text-[10px] tnum text-gray-400">سیگنال با فیلتر ریسک: {xCount} • بدون فیلتر: {yCount}</div>
+            </div>
+
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(139,92,246,.4)'}}>
+              <div className="font-bold text-sm mb-2" style={{color:'#c4b5fd'}}>💾 پشتیبان‌گیری فایل</div>
+              <label className="flex items-center gap-2 mb-2 text-[10px] text-gray-400">
+                <input type="checkbox" checked={includeKeys} onChange={function(){setIncludeKeys(!includeKeys);}}/>
+                شامل کلیدهای API در فایل پشتیبان
+              </label>
+              <div className="flex gap-2">
+                <button onClick={exportBackup} className="flex-1 px-3 py-2 rounded-lg text-[11px] font-bold" style={{background:'rgba(139,92,246,.15)',border:'1px solid rgba(139,92,246,.3)',color:'#c4b5fd'}}>💾 خروجی فایل</button>
+                <button onClick={function(){ if(fileInputRef.current)fileInputRef.current.click(); }} className="flex-1 px-3 py-2 rounded-lg text-[11px] font-bold" style={{background:'rgba(34,211,238,.15)',border:'1px solid rgba(34,211,238,.3)',color:'#a5f3fc'}}>📥 بازیابی از فایل</button>
+              </div>
+              <input type="file" accept=".json,application/json" style={{display:'none'}} ref={fileInputRef} onChange={onImportFile}/>
+            </div>
+
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(251,191,36,.4)'}}>
+              <div className="font-bold text-sm mb-2" style={{color:'#fde68a'}}>💾 مدیریت داده‌ها</div>
+              <div className="text-[10px] text-gray-400 tnum mb-2">سیگنال‌ها: {trackedRef.current.size} • کیف‌پول: {walletCount} • پاد: {pods.length} • واچ: {watch.tokens.length} • بک‌تست: {btStats.total}</div>
+              <div className="flex gap-2">
+                <button onClick={handleManualSave} className="flex-1 px-3 py-2 rounded-lg text-[11px] font-bold" style={{background:'rgba(16,185,129,.15)',border:'1px solid rgba(16,185,129,.3)',color:'#86efac'}}>💾 ذخیره دستی</button>
+                <button onClick={clearLS} className="px-3 py-2 rounded-lg text-[11px] font-bold" style={{background:'rgba(239,68,68,.15)',border:'1px solid rgba(239,68,68,.3)',color:'#fca5a5'}}>🗑 پاک‌سازی</button>
+              </div>
+              {saveMsg && <div className="mt-2 text-[10px]" style={{color:'#86efac'}}>{saveMsg}</div>}
+            </div>
+
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(34,211,238,.4)'}}>
+              <div className="font-bold text-sm mb-2" style={{color:'#a5f3fc'}}>🔑 کلیدهای API</div>
+              <div className="flex flex-col gap-2">
+                <input type="password" value={keyDraft.helius} onChange={function(e){setKeyDraft(function(k){return {helius:e.target.value,jupiter:k.jupiter,soltracker:k.soltracker};});}} placeholder="Helius API Key" className="w-full glass rounded-lg px-3 py-2 text-[11px] outline-none" style={{border:'1px solid rgba(255,255,255,.1)'}}/>
+                <input type="password" value={keyDraft.jupiter} onChange={function(e){setKeyDraft(function(k){return {helius:k.helius,jupiter:e.target.value,soltracker:k.soltracker};});}} placeholder="Jupiter API Key" className="w-full glass rounded-lg px-3 py-2 text-[11px] outline-none" style={{border:'1px solid rgba(255,255,255,.1)'}}/>
+                <input type="password" value={keyDraft.soltracker} onChange={function(e){setKeyDraft(function(k){return {helius:k.helius,jupiter:k.jupiter,soltracker:e.target.value};});}} placeholder="Solana Tracker API Key" className="w-full glass rounded-lg px-3 py-2 text-[11px] outline-none" style={{border:'1px solid rgba(255,255,255,.1)'}}/>
+                <button onClick={handleSaveKeys} className="px-3 py-2 rounded-lg text-[11px] font-bold" style={{background:'rgba(34,211,238,.15)',border:'1px solid rgba(34,211,238,.3)',color:'#a5f3fc'}}>🔑 ذخیره کلیدها</button>
+              </div>
+              <div className="mt-2 text-[10px] tnum text-gray-400">Helius {keys.helius?'✅':'❌'} • Jupiter {keys.jupiter?'✅':'❌'} • SolTracker {keys.soltracker?'✅':'❌'}</div>
+            </div>
+
+            {srcList.map(function(sl){
+              const st=sourceStats[sl[0]]||{ok:false,count:0,time:null,error:null};
+              return (
+                <div key={sl[0]} className="glass rounded-xl p-3" style={{border:'1px solid '+(st.ok?'rgba(16,185,129,.3)':'rgba(239,68,68,.3)')}}>
+                  <div className="flex justify-between items-center">
+                    <div className="font-bold text-sm">{sl[1]}</div>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold" style={{background:st.ok?'rgba(16,185,129,.15)':'rgba(239,68,68,.15)',color:st.ok?'#10b981':'#ef4444'}}>{st.ok?'✓ متصل':'✗ خطا'}</span>
+                  </div>
+                  <div className="flex justify-between mt-1 text-[10px] text-gray-400 tnum">
+                    <span>آیتم‌ها: {st.count}</span>
+                    <span>{st.time||'—'}</span>
+                  </div>
+                  {st.error && <div className="mt-1 text-[10px]" style={{color:'#fca5a5'}}>{String(st.error).slice(0,140)}</div>}
+                </div>
+              );
+            })}
+          </div>
+        ) : isAssist ? (
+          <div className="flex flex-col gap-2.5">
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(251,191,36,.4)'}}>
+              <div className="font-bold text-sm mb-2" style={{color:'#fde68a'}}>⚙️ تنظیمات دستیار</div>
+              <div className="flex gap-2">
+                <button onClick={toggleBacktest} className="flex-1 px-3 py-2 rounded-lg text-[11px] font-bold" style={{background:backtestOn?'rgba(16,185,129,.15)':'rgba(107,114,128,.15)',border:'1px solid '+(backtestOn?'rgba(16,185,129,.3)':'rgba(107,114,128,.3)'),color:backtestOn?'#86efac':'#9ca3af'}}>📊 بک‌تست {backtestOn?'روشن':'خاموش'}</button>
+                <button onClick={togglePaper} className="flex-1 px-3 py-2 rounded-lg text-[11px] font-bold" style={{background:paperOn?'rgba(16,185,129,.15)':'rgba(107,114,128,.15)',border:'1px solid '+(paperOn?'rgba(16,185,129,.3)':'rgba(107,114,128,.3)'),color:paperOn?'#86efac':'#9ca3af'}}>📉 پورتفوی {paperOn?'روشن':'خاموش'}</button>
+              </div>
+            </div>
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(34,211,238,.3)'}}>
+              <div className="font-bold text-sm mb-2" style={{color:'#a5f3fc'}}>📊 بک‌تست زنده</div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-lg py-2" style={{background:'rgba(0,0,0,.3)'}}><div className="text-[9px] text-gray-500">تعداد</div><div className="text-sm font-bold tnum">{btStats.total}</div></div>
+                <div className="rounded-lg py-2" style={{background:'rgba(0,0,0,.3)'}}><div className="text-[9px] text-gray-500">برد ۶۰د</div><div className="text-sm font-bold tnum" style={{color:'#10b981'}}>{btStats.wins}</div></div>
+                <div className="rounded-lg py-2" style={{background:'rgba(0,0,0,.3)'}}><div className="text-[9px] text-gray-500">نرخ برد</div><div className="text-sm font-bold tnum" style={{color:btWinRate>=50?'#10b981':'#ef4444'}}>{btWinRate}%</div></div>
+              </div>
+              {Object.keys(btCatStats).length>0 && (
+                <div className="mt-2 flex flex-col gap-1">
+                  <div className="text-[10px] font-bold text-gray-400">نرخ برد به تفکیک تب:</div>
+                  {Object.keys(btCatStats).map(function(c){
+                    const s=btCatStats[c];
+                    const rate= s.total>0? Math.round(s.wins/s.total*100):0;
+                    return <div key={c} className="flex justify-between text-[10px] tnum px-2 py-1 rounded" style={{background:'rgba(0,0,0,.3)'}}>
+                      <span>{CAT_LABEL[c]||c}</span>
+                      <span style={{color:rate>=50?'#10b981':'#ef4444'}}>{s.wins}/{s.total} = {rate}%</span>
+                    </div>;
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(16,185,129,.3)'}}>
+              <div className="font-bold text-sm mb-2" style={{color:'#86efac'}}>📉 پورتفوی کاغذی</div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-lg py-2" style={{background:'rgba(0,0,0,.3)'}}><div className="text-[9px] text-gray-500">سرمایه</div><div className="text-sm font-bold tnum">${Math.round(paperStats.equity)}</div></div>
+                <div className="rounded-lg py-2" style={{background:'rgba(0,0,0,.3)'}}><div className="text-[9px] text-gray-500">باز</div><div className="text-sm font-bold tnum">{paperStats.open}</div></div>
+                <div className="rounded-lg py-2" style={{background:'rgba(0,0,0,.3)'}}><div className="text-[9px] text-gray-500">سود تحقق</div><div className="text-sm font-bold tnum" style={{color:paperStats.realized>=0?'#10b981':'#ef4444'}}>${Math.round(paperStats.realized)}</div></div>
+              </div>
+            </div>
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(251,191,36,.3)'}}>
+              <div className="font-bold text-sm mb-2" style={{color:'#fde68a'}}>🏦 رادار لیستینگ CEX (شکاف vs Binance)</div>
+              {listingCandidates.length===0 && <div className="text-center text-gray-500 text-sm py-3">موردی نیست</div>}
+              <div className="flex flex-col gap-1.5">
+                {listingCandidates.map(function(c){
+                  return <div key={c.symbol} className="flex justify-between p-2 rounded-lg" style={{background:'rgba(0,0,0,.3)'}}>
+                    <span className="font-bold text-[11px]">{c.symbol}</span>
+                    <span className="text-[10px] text-gray-400">{c.source} • {fmtUsd(c.vol)}</span>
+                  </div>;
+                })}
+              </div>
+            </div>
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(16,185,129,.3)'}}>
+              <div className="font-bold text-sm mb-2" style={{color:'#86efac'}}>🌉 جریان ورود پول به زنجیره‌ها</div>
+              {inflows.length===0 && <div className="text-center text-gray-500 text-sm py-3">ورود پول مثبتی نیست</div>}
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+                {inflows.map(function(c){
+                  return <div key={c.key} className="px-3 py-2 rounded-lg whitespace-nowrap" style={{background:'rgba(0,0,0,.3)'}}>
+                    <div className="text-[11px] font-bold">{c.name}</div>
+                    <div className="text-[10px] tnum" style={{color:'#10b981'}}>+{c.chg.toFixed(2)}%</div>
+                  </div>;
+                })}
+              </div>
+            </div>
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(34,211,238,.3)'}}>
+              <div className="font-bold text-sm mb-2" style={{color:'#a5f3fc'}}>📋 واچ‌لیست من</div>
+              {watch.tokens.length===0 && watch.wallets.length===0 && <div className="text-center text-gray-500 text-sm py-3">چیزی پین نکردی — روی ⭐ کارت‌ها بزن</div>}
+              <div className="flex flex-col gap-1.5">
+                {watch.tokens.map(function(k){
+                  const it=itemByKey.get(k);
+                  return <div key={k} className="flex justify-between items-center p-2 rounded-lg" style={{background:'rgba(0,0,0,.3)'}}>
+                    <span className="font-bold text-[11px]">{it?it.symbol:shortAddr(k)}</span>
+                    <span className="text-[10px] tnum" style={{color:(it&&(it.chg1||0)>=0)?'#10b981':'#ef4444'}}>{it?fmtPrice(it.price):'—'}</span>
+                    <button onClick={function(){toggleWatchToken(k);}} className="text-[10px] px-2 py-0.5 rounded" style={{background:'rgba(239,68,68,.15)',color:'#fca5a5'}}>حذف</button>
+                  </div>;
+                })}
+                {watch.wallets.map(function(a){
+                  return <div key={a} className="flex justify-between items-center p-2 rounded-lg" style={{background:'rgba(0,0,0,.3)'}}>
+                    <span className="font-bold text-[10px] tnum">{shortAddr(a)}</span>
+                    <button onClick={function(){toggleWatchWallet(a);}} className="text-[10px] px-2 py-0.5 rounded" style={{background:'rgba(239,68,68,.15)',color:'#fca5a5'}}>حذف</button>
+                  </div>;
+                })}
+              </div>
+            </div>
+          </div>
+        ) : isSmart ? (
+          <div className="flex flex-col gap-2.5">
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(34,211,238,.3)'}}>
+              <div className="font-bold text-sm" style={{color:'#a5f3fc'}}>🐋 پول هوشمند — تشخیص تلاقی</div>
+              <div className="text-[10px] text-gray-500 mt-1">وقتی ≥{CONFIG.CONFLUENCE_THRESHOLD} کیف‌پول برتر یک توکن رو با هم نگه دارن. (نیاز به Helius)</div>
+            </div>
+            {confluence.length===0 && (
+              <div className="glass rounded-xl p-6 text-center text-gray-500 text-sm">🐋 هنوز تلاقی پیدا نشده... {keys.helius?'صبر کن':'کلید Helius رو وارد کن'}</div>
+            )}
+            {confluence.map(function(c){
+              return (
+                <div key={c.mint} className="glass rounded-xl p-3" style={{border:'1px solid rgba(34,211,238,.4)'}}>
+                  <div className="flex justify-between items-center">
+                    <div className="font-bold text-sm">🚨 {c.symbol}</div>
+                    <span className="text-[11px] font-bold tnum px-2 py-0.5 rounded" style={{background:'rgba(34,211,238,.15)',color:'#67e8f9',border:'1px solid rgba(34,211,238,.3)'}}>{c.count} کیف‌پول</span>
+                  </div>
+                  <div className="flex justify-between mt-1 text-[10px] text-gray-400 tnum">
+                    <span>قیمت: {fmtPrice(c.price)}</span>
+                    <span style={{color:c.chg1>=0?'#10b981':'#ef4444'}}>{c.chg1>=0?'+':''}{c.chg1.toFixed(2)}%</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : isWhales ? (
+          <div className="flex flex-col gap-2.5">
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(34,211,238,.3)'}}>
+              <div className="font-bold text-sm" style={{color:'#a5f3fc'}}>🕸️ شبکه و پیوستگی نهنگ‌ها</div>
+              <div className="text-[10px] text-gray-500 mt-1">کیف‌پول‌هایی که بارها در توکن مشترک دیده شدن = پاد. (نیاز به Helius)</div>
+            </div>
+            {pods.length===0 && (
+              <div className="glass rounded-xl p-6 text-center text-gray-500 text-sm">🕸️ هنوز پادی کشف نشده... {keys.helius?'صبر کن':'کلید Helius رو وارد کن'}</div>
+            )}
+            {pods.map(function(p,i){
+              return (
+                <div key={p.id} className="glass rounded-xl p-3" style={{border:'1px solid '+(p.label==='smart'?'rgba(16,185,129,.4)':'rgba(239,68,68,.4)')}}>
+                  <div className="flex justify-between items-center">
+                    <div className="font-bold text-sm">{p.label==='smart'?'🧠 پاد هوشمند':'🕵️ پاد اینسایدر'} #{i+1}</div>
+                    <span className="text-[11px] font-bold tnum px-2 py-0.5 rounded" style={{background:'rgba(0,0,0,.3)',color:'#a5f3fc'}}>{p.members.length} عضو</span>
+                  </div>
+                  <div className="text-[10px] text-gray-400 tnum mt-1">میانگین امتیاز: {Math.round(p.avgScore)} • توکن مشترک: {p.sharedTokens.length}</div>
+                  <div className="flex gap-1 flex-wrap mt-1">
+                    {p.members.slice(0,4).map(function(a){
+                      return <span key={a} className="text-[9px] px-1.5 py-0.5 rounded tnum" style={{background:'rgba(0,0,0,.3)',color:'#9ca3af'}}>{shortAddr(a)}</span>;
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : isWallets ? (
+          <div className="flex flex-col gap-2.5">
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(34,211,238,.3)'}}>
+              <div className="font-bold text-sm mb-2" style={{color:'#a5f3fc'}}>👛 هوش کیف‌پول — جستجو و لیدربرد</div>
+              <input type="text" value={walletSearch} onChange={function(e){setWalletSearch(e.target.value);}} placeholder="🔍 آدرس کیف‌پول..." className="w-full glass rounded-lg px-3 py-2 text-[11px] outline-none" style={{border:'1px solid rgba(255,255,255,.1)'}}/>
+              {walletSearch && walletSearchResult && (
+                <div className="mt-2 p-3 rounded-lg" style={{background:'rgba(34,211,238,.08)',border:'1px solid rgba(34,211,238,.3)'}}>
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-xs tnum">{shortAddr(walletSearchResult.address)}</span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded" style={tierStyle(walletSearchResult.tier)}>Tier {walletSearchResult.tier}</span>
+                  </div>
+                  <div className="flex justify-between mt-1 text-[10px] text-gray-400 tnum">
+                    <span>امتیاز: {walletSearchResult.score}</span>
+                    <span>برد: {walletSearchResult.wins}</span>
+                  </div>
+                </div>
+              )}
+              {walletSearch && !walletSearchResult && <div className="mt-2 text-[10px] text-gray-500">در لیست کشف‌شده نیست.</div>}
+            </div>
+            <div className="glass rounded-xl p-3" style={{border:'1px solid rgba(251,191,36,.3)'}}>
+              <div className="font-bold text-sm mb-2" style={{color:'#fde68a'}}>🏆 لیدربرد {topWallets.length} کیف‌پول برتر</div>
+              {topWallets.length===0 && <div className="text-center text-gray-500 text-sm py-4">هنوز کیف‌پولی کشف نشده</div>}
+              <div className="flex flex-col gap-1.5">
+                {topWallets.map(function(w,i){
+                  const pinned=watch.wallets.indexOf(w.address)>-1;
+                  return (
+                    <div key={w.address} className="p-2 rounded-lg flex items-center justify-between" style={{background:'rgba(0,0,0,.3)'}}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] tnum text-gray-500">#{i+1}</span>
+                        <span className="font-bold text-[11px] tnum">{shortAddr(w.address)}</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded" style={tierStyle(w.tier)}>T{w.tier}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={function(){ if(copyText(w.address)) flash('📋 آدرس کپی شد'); }} className="text-[11px]" style={{color:'#9ca3af'}}>📋</button>
+                        <span className="text-[13px] font-black tnum" style={{color:'#fbbf24'}}>{w.score}</span>
+                        <button onClick={function(){toggleWatchWallet(w.address);}} className="text-[12px]" style={{color:pinned?'#fbbf24':'#6b7280'}}>{pinned?'⭐':'☆'}</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div>
+            {displayed.length===0 && !status.loading && (
+              <div className="text-center py-10 text-gray-500 text-sm rounded-xl glass">{status.connected?(isEarly?'🚀 هنوز کاندیدای ورود زودهنگام پیدا نشده — صبر کن...':'😴 چیزی نیست — صبر کن...'):'⏳ اتصال...'}</div>
+            )}
+
+            {displayed.length>0 && (
+              <div className="flex flex-col gap-2.5 coin-list">
+                {displayed.map(function(it,idx){
+                  const color=scoreColor(it.score||0);
+                  const cs=getChainStyle(it.chain);
+                  const e=tracked.get(it.key);
+                  const cat= (isAll||isEarly)?null:activeTab;
+                  const fs= (cat&&e)? (e.catFirstSeen[cat]||it.firstSeen||0) : (it.firstSeen||0);
+                  const isNew= fs>0&&(now-fs)<CONFIG.NEW_THRESHOLD_MS;
+                  const ageSec= fs>0?Math.floor((now-fs)/1000):null;
+                  const ageLabel= ageSec!==null?(ageSec<60?ageSec+' ثانیه پیش':Math.floor(ageSec/60)+' دقیقه پیش'):'';
+                  const shown= (it.signals&&it.signals.length)? it.signals : (e?e.lastSignals:[]);
+                  const sec=securityData[it.key];
+                  const pro=proData[it.key];
+                  const ee=earlyMap[it.key];
+                  const plan=calcPlan(it);
+                  const confl=confluenceByMint[it.contractAddress]||0;
+                  const comp=calcComposite(it,sec,pro,ee,confl,riskVal);
+                  const pinned=watch.tokens.indexOf(it.key)>-1;
+                  const secAge= sec? Math.max(0,Math.round((now-sec.ts)/60000)) : 0;
+                  const isSolChain= String(it.chain||'').toLowerCase().indexOf('sol')>-1;
+                  const chainSupported= isSolChain || !!CHAIN_TO_GORPLUS_ID[String(it.chain||'').toLowerCase()];
+                  const expUrl= explorerUrl(it.chain,it.contractAddress);
+                  const cl= checklistOpen===it.key? buildChecklist(it,sec,pro,plan,confl,riskModeOn,riskModeOn?riskModeLabel(riskVal):{label:'غیرفعال',color:'#6b7280'},chainSupported) : null;
+                  const dispPrice= (pro&&pro.price)? pro.price : it.price;
+                  const borderColor= isNew ? 'rgba(34,211,238,.5)' : ((it.score||0)>=70 ? 'rgba(251,191,36,.4)' : 'rgba(255,255,255,.08)');
+                  return (
+                    <div key={it.key} onClick={function(){openItem(it);}} className="glass rounded-xl p-3.5 relative overflow-hidden coin-card cursor-pointer" style={{border:'1px solid '+borderColor}}>
+                      {(isNew||(it.score||0)>=70) && <div className="absolute top-0 left-0 right-0 h-0.5" style={{background:'linear-gradient(90deg,#fbbf24,#22d3ee)'}}/>}
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex items-center gap-2.5">
+                          {it.icon?<img src={it.icon} className="w-10 h-10 rounded-full" style={{border:'2px solid '+cs.border}}/>:<div className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-black" style={{background:cs.bg,border:'2px solid '+cs.border,color:cs.text}}>{it.symbol.substring(0,3)}</div>}
+                          <div>
+                            <div className="font-bold text-sm flex items-center gap-1.5">
+                              <span className="tnum text-gray-500 text-[10px]">#{idx+1}</span>{it.symbol}
+                              {isNew && <span className="new-badge text-[9px] px-1.5 py-0.5 rounded" style={{color:'#67e8f9',border:'1px solid rgba(34,211,238,.4)'}}>🆕</span>}
+                              <span className="text-[9px] px-1.5 py-0.5 rounded font-bold" style={{background:'rgba(139,92,246,.15)',border:'1px solid rgba(139,92,246,.4)',color:'#c4b5fd'}}>🧠{comp}</span>
+                            </div>
+                            <div className="text-[10px] text-gray-500 mt-0.5 flex items-center gap-1.5">
+                              {it.ageMs?('🍼 '+fmtAge(it.ageMs)):'🏦'}
+                              <span className="px-1.5 py-0.5 rounded" style={{background:cs.bg,color:cs.text,border:'1px solid '+cs.border}}>{cs.label}</span>
+                              <span className="px-1.5 py-0.5 rounded" style={{background:'rgba(255,255,255,.05)',color:'#9ca3af'}}>{it.dex}</span>
+                            </div>
+                            {ageLabel && <div className="text-[9px] text-gray-400 mt-0.5">{ageLabel}</div>}
+                          </div>
+                        </div>
+                        <div className="text-left flex gap-2 items-start">
+                          <button onClick={function(ev){ev.stopPropagation();toggleWatchToken(it.key);}} className="text-[14px]" style={{color:pinned?'#fbbf24':'#6b7280'}}>{pinned?'⭐':'☆'}</button>
+                          <div><div className="text-xl font-black tnum" style={{color}}>{it.score||0}</div><div className="text-[9px] text-gray-500">سیگنال</div></div>
+                          <div><div className="text-xl font-black tnum" style={{color:'#22d3ee'}}>🛡{it.trust||0}</div><div className="text-[9px] text-gray-500">اطمینان</div></div>
+                        </div>
+                      </div>
+
+                      {ee && ee.score>=50 && (
+                        <div className="mb-2 p-2 rounded-lg" style={{background:'rgba(34,211,238,.08)',border:'1px solid rgba(34,211,238,.25)'}}>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold" style={{color:'#67e8f9'}}>🚀 امتیاز ورود زودهنگام</span>
+                            <span className="text-[13px] font-black tnum" style={{color: ee.score>=80?'#10b981':(ee.score>=60?'#f59e0b':'#3b82f6')}}>{ee.score}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {plan && it.kind==='birth' && (
+                        <div className="mb-2 p-2 rounded-lg text-[9px] tnum" style={{background:'rgba(251,191,36,.06)',border:'1px solid rgba(251,191,36,.2)',color:'#fde68a'}}>
+                          🎯 ورود {fmtPrice(plan.entry)} | SL {fmtPrice(plan.sl)} | TP {fmtPrice(plan.tp2)} | R/R {plan.rr.toFixed(1)} | اسلیپ {plan.slip.toFixed(1)}%{plan.liqOk?'':' ⚠️'}
+                        </div>
+                      )}
+
+                      {shown.length>0 && <div className="flex gap-1.5 flex-wrap mb-2">{shown.map(function(sg,i){
+                        return <span key={i} className="px-2 py-1 rounded-md text-[10px] font-semibold" style={{background:sg.label.indexOf('فشار فروش')>-1?'rgba(239,68,68,.15)':'rgba(251,191,36,.12)',border:'1px solid '+(sg.label.indexOf('فشار فروش')>-1?'rgba(239,68,68,.3)':'rgba(251,191,36,.3)'),color:sg.label.indexOf('فشار فروش')>-1?'#fca5a5':'#fde68a'}}>{sg.icon} {sg.label}</span>;
+                      })}</div>}
+                      <div className="grid grid-cols-4 gap-1.5 text-center">
+                        <div className="rounded-lg py-1.5" style={{background:'rgba(0,0,0,.3)'}}><div className="text-[9px] text-gray-500">قیمت</div><div className="text-[11px] font-bold tnum">{fmtPrice(dispPrice)}</div></div>
+                        <div className="rounded-lg py-1.5" style={{background:'rgba(0,0,0,.3)'}}><div className="text-[9px] text-gray-500">حجم ۲۴س</div><div className="text-[11px] font-bold tnum">{fmtUsd((it.vol1||0)*12)}</div></div>
+                        <div className="rounded-lg py-1.5" style={{background:'rgba(0,0,0,.3)'}}><div className="text-[9px] text-gray-500">حجم ۵د</div><div className="text-[11px] font-bold tnum">{fmtUsd(it.vol5||0)}</div></div>
+                        <div className="rounded-lg py-1.5" style={{background:'rgba(0,0,0,.3)'}}><div className="text-[9px] text-gray-500">۲۴س</div><div className="text-[11px] font-bold tnum" style={{color:(it.chg1||0)>=0?'#10b981':'#ef4444'}}>{(it.chg1||0)>=0?'+':''}{(it.chg1||0).toFixed(2)}%</div></div>
+                      </div>
+
+                      {it.contractAddress && sec && sec.checked && (
+                        <div className="mt-2 pt-2" style={{borderTop:'1px solid rgba(255,255,255,.08)'}}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] font-bold" style={{color:'#a5f3fc'}}>🛡️ بررسی امنیت <span className="text-[9px] font-normal text-gray-500 tnum">({secAge}د پیش)</span></span>
+                            <div className="flex items-center gap-1">
+                              <button onClick={function(ev){ev.stopPropagation();forceRecheck(it.key);}} className="text-[10px] px-1.5 py-0.5 rounded" style={{background:'rgba(34,211,238,.1)',border:'1px solid rgba(34,211,238,.3)',color:'#a5f3fc'}}>🔄</button>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded font-bold" style={{
+                                background: sec.dangerous?'rgba(239,68,68,.2)':(sec.safe?'rgba(16,185,129,.2)':'rgba(251,191,36,.2)'),
+                                color: sec.dangerous?'#fca5a5':(sec.safe?'#86efac':'#fde68a'),
+                                border:'1px solid '+(sec.dangerous?'rgba(239,68,68,.4)':(sec.safe?'rgba(16,185,129,.4)':'rgba(251,191,36,.4)'))
+                              }}>{sec.dangerous?'🚨 خطرناک':(sec.safe?'✅ امن':'⚠️ متوسط')} ({sec.risk})</span>
+                            </div>
+                          </div>
+                          <div className="flex gap-1 flex-wrap">
+                            {sec.signals.slice(0,4).map(function(s,i){
+                              return <span key={i} className="text-[9px] px-1.5 py-0.5 rounded" style={{
+                                background: s.danger?'rgba(239,68,68,.15)':(s.good?'rgba(16,185,129,.15)':'rgba(251,191,36,.12)'),
+                                border:'1px solid '+(s.danger?'rgba(239,68,68,.3)':(s.good?'rgba(16,185,129,.3)':'rgba(251,191,36,.3)')),
+                                color: s.danger?'#fca5a5':(s.good?'#86efac':'#fde68a'),
+                              }}>{s.icon} {s.label}</span>;
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {it.contractAddress && it.kind==='birth' && (!sec || !sec.checked) && (
+                        <div className="mt-2 pt-2" style={{borderTop:'1px solid rgba(255,255,255,.08)'}}>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded" style={{background:'rgba(107,114,128,.15)',border:'1px solid rgba(107,114,128,.3)',color:'#9ca3af'}}>
+                            {chainSupported? '🛡️ بررسی امنیت: در حال بررسی...' : '🛡️ بررسی امنیت: برای این زنجیره در دسترس نیست'}
+                          </span>
+                        </div>
+                      )}
+
+                      {cl && (
+                        <div className="mt-2 p-2 rounded-lg" style={{background:'rgba(0,0,0,.35)',border:'1px solid rgba(255,255,255,.1)'}}>
+                          <div className="text-[10px] font-bold mb-1" style={{color:'#fde68a'}}>📋 چک‌لیست خرید</div>
+                          {cl.rows.map(function(r,i){
+                            return <div key={i} className="flex items-center gap-1 text-[9px] py-0.5" style={{color:lvlColor(r.lvl)}}>{r.icon} {r.t}</div>;
+                          })}
+                          <div className="mt-1 text-[10px] font-bold" style={{color:lvlColor(cl.vlvl)}}>{cl.verdict}</div>
+                        </div>
+                      )}
+
+                      {it.contractAddress && (
+                        <div className="flex gap-1 flex-wrap mt-2">
+                          <button onClick={function(ev){ev.stopPropagation(); setChecklistOpen(checklistOpen===it.key? null : it.key);}} className="text-[9px] px-2 py-1 rounded font-bold" style={{background:checklistOpen===it.key?'rgba(251,191,36,.2)':'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.3)',color:'#fde68a'}}>📋 چک‌لیست</button>
+                          {it.url && <button onClick={function(ev){ev.stopPropagation();window.open(it.url,'_blank');}} className="text-[9px] px-2 py-1 rounded" style={{background:'rgba(255,255,255,.05)',border:'1px solid rgba(255,255,255,.1)',color:'#9ca3af'}}>📊 DexScreener</button>}
+                          {expUrl && <button onClick={function(ev){ev.stopPropagation();window.open(expUrl,'_blank');}} className="text-[9px] px-2 py-1 rounded" style={{background:'rgba(255,255,255,.05)',border:'1px solid rgba(255,255,255,.1)',color:'#9ca3af'}}>🔍 Explorer</button>}
+                          {isSolChain && <button onClick={function(ev){ev.stopPropagation();window.open('https://rugcheck.xyz/tokens/'+it.contractAddress,'_blank');}} className="text-[9px] px-2 py-1 rounded" style={{background:'rgba(255,255,255,.05)',border:'1px solid rgba(255,255,255,.1)',color:'#9ca3af'}}>🦎 RugCheck</button>}
+                          <button onClick={function(ev){ev.stopPropagation(); if(copyText(it.contractAddress)) flash('📋 آدرس کپی شد');}} className="text-[9px] px-2 py-1 rounded" style={{background:'rgba(255,255,255,.05)',border:'1px solid rgba(255,255,255,.1)',color:'#9ca3af'}}>📋 کپی آدرس</button>
+                        </div>
+                      )}
+
+                      {pro && (pro.price!==undefined||pro.sellable!==undefined||pro.concentration!==undefined||pro.evmSellable!==undefined) && (
+                        <div className="mt-2 pt-2" style={{borderTop:'1px solid rgba(255,255,255,.08)'}}>
+                          <div className="text-[10px] font-bold mb-1" style={{color:'#67e8f9'}}>🚀 Solana Pro / شبیه‌سازی</div>
+                          <div className="flex gap-1 flex-wrap">
+                            {pro.sellable===true && <span className="text-[9px] px-1.5 py-0.5 rounded" style={{background:'rgba(16,185,129,.15)',border:'1px solid rgba(16,185,129,.3)',color:'#86efac'}}>✅ قابل فروش (Jupiter)</span>}
+                            {pro.sellable===false && <span className="text-[9px] px-1.5 py-0.5 rounded" style={{background:'rgba(239,68,68,.15)',border:'1px solid rgba(239,68,68,.3)',color:'#fca5a5'}}>🚨 غیرقابل فروش</span>}
+                            {pro.evmSellable===true && <span className="text-[9px] px-1.5 py-0.5 rounded" style={{background:'rgba(16,185,129,.15)',border:'1px solid rgba(16,185,129,.3)',color:'#86efac'}}>✅ مسیر فروش (EVM)</span>}
+                            {pro.evmSellable===false && <span className="text-[9px] px-1.5 py-0.5 rounded" style={{background:'rgba(239,68,68,.15)',border:'1px solid rgba(239,68,68,.3)',color:'#fca5a5'}}>🚨 بدون مسیر فروش (EVM)</span>}
+                            {pro.concentration!==undefined && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded" style={{
+                                background: pro.concentration>0.6?'rgba(239,68,68,.15)':'rgba(16,185,129,.15)',
+                                border:'1px solid '+(pro.concentration>0.6?'rgba(239,68,68,.3)':'rgba(16,185,129,.3)'),
+                                color: pro.concentration>0.6?'#fca5a5':'#86efac',
+                              }}>{pro.concentration>0.6?'🚨':''} تمرکز هولدر {Math.round(pro.concentration*100)}%</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {isAll && filtered.length>displayCount && (
+              <button onClick={function(){setDisplayCount(function(p){return p+CONFIG.LOAD_MORE_STEP;});}} className="w-full mt-3 py-3 rounded-xl text-sm font-bold" style={{background:'linear-gradient(120deg,rgba(251,191,36,.15),rgba(34,211,238,.1))',border:'1px solid rgba(251,191,36,.3)',color:'#fde68a'}}>نمایش بیشتر ({filtered.length-displayCount})</button>
+            )}
+          </div>
+        )}
+
+        {chains.length>0 && !isAssist && (
+          <div className="mt-4 glass rounded-xl p-3" style={{border:'1px solid rgba(16,185,129,.2)'}}>
+            <div className="font-bold text-xs mb-2" style={{color:'#10b981'}}>💰 جریان TVL زنجیره‌ها (DeFiLlama)</div>
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+              {chains.map(function(c){
+                return <div key={c.key} className="px-3 py-2 rounded-lg whitespace-nowrap" style={{background:'rgba(0,0,0,.3)'}}>
+                  <div className="text-[11px] font-bold">{c.name}</div>
+                  <div className="text-[10px] tnum text-gray-400">{fmtUsd(c.tvl)}</div>
+                  <div className="text-[10px] tnum" style={{color:c.chg>=0?'#10b981':'#ef4444'}}>{c.chg>=0?'+':''}{c.chg.toFixed(2)}%</div>
+                </div>;
+              })}
+            </div>
+          </div>
+        )}
+
+        {live.length>0 && !isAssist && (
+          <div className="mt-3 glass rounded-xl p-3" style={{border:'1px solid rgba(34,211,238,.2)'}}>
+            <div className="font-bold text-xs mb-2" style={{color:'#22d3ee'}}>⚡ بیشترین رشد ۲۴س زنده (Binance)</div>
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+              {live.map(function(l){
+                return <div key={l.id} className="px-3 py-2 rounded-lg whitespace-nowrap" style={{background:'rgba(0,0,0,.3)'}}>
+                  <div className="text-[11px] font-bold">{l.id.replace('USDT','')}</div>
+                  <div className="text-[10px] tnum text-gray-400">{fmtPrice(l.price)}</div>
+                  <div className="text-[10px] tnum" style={{color:'#10b981'}}>+{(l.chg||0).toFixed(2)}%</div>
+                </div>;
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4 p-3 rounded-xl text-[10px] text-gray-500 leading-relaxed glass">
+          <div className="font-bold text-amber-300 mb-1"> فاز ۱ تا ۶ + ۵ اصلاح جزئی فعال:</div>
+          <div>• 📋 چک‌لیست خرید • 🧪 تست فروش EVM • 💾 ذخیره بک‌تست • 🌗 کلید ریسک‌بازار • 🌐 زنجیره‌های بیشتر</div>
+          <div className="mt-2 italic">⚠️ توصیه معاملاتی نیست.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App/></ErrorBoundary>);
+</script>
+  <script>
+(function(){
+  function show(sb){
+    var d=document.createElement('div');
+    d.style.cssText='position:fixed;bottom:10px;left:10px;right:10px;z-index:60;background:rgba(5,7,15,.94);border:1px solid rgba(34,211,238,.4);border-radius:12px;padding:10px;font-family:Tahoma,sans-serif;direction:rtl;color:#f1f5f9;font-size:11px;';
+    d.innerHTML='🖥️ بک‌تست سرور ۲۴/۷: '+sb.total+' سیگنال • برد '+sb.wins+' ('+sb.winRate+'%)';
+    document.body.appendChild(d);
+    setTimeout(function(){ if(d&&d.parentNode)d.parentNode.removeChild(d); },8000);
+  }
+  fetch('/api/backtest').then(function(r){ if(!r.ok)throw 0; return r.json(); }).then(function(sb){ if(sb&&sb.total>0)show(sb); }).catch(function(){});
+})();
+</script>
+</body>
+</html>
